@@ -168,6 +168,7 @@ void ConfigHandler::Load() {
 	GetReg("AutoStart", &startWindows);
 	GetReg("Minimized", &startMinimized);
 	GetReg("AlwaysAdmin", &alwaysAdmin);
+	GetReg("StartupIntro", &startupIntro, 1);
 	GetReg("UpdateCheck", &updateCheck, 1);
 	GetReg("LightsOn", &lightsOn, 1);
 	GetReg("Dimmed", &dimmed);
@@ -364,6 +365,7 @@ void ConfigHandler::Save() {
 	SetReg("AutoStart", startWindows);
 	SetReg("Minimized", startMinimized);
 	SetReg("AlwaysAdmin", alwaysAdmin);
+	SetReg("StartupIntro", startupIntro);
 	SetReg("UpdateCheck", updateCheck);
 	SetReg("LightsOn", lightsOn);
 	SetReg("Dimmed", dimmed);

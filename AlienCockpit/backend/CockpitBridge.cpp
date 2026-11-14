@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <unordered_map>
 
 extern ConfigHandler* conf;
@@ -20,8 +21,24 @@ extern EventHandler* eve;
 extern MonHelper* mon;
 extern ConfigFan* fan_conf;
 
+constexpr byte EFFECT_SUMMER = 7;
+
 static unsigned g_prePresetProfileId = 0;
 static std::string g_activePresetName;
+
+static bool g_probeActive = false;
+static bool g_introActive = false;
+static ULONGLONG g_introStartMs = 0;
+
+struct WaterDrop {
+    double x;
+    double y;
+    ULONGLONG startMs;
+};
+static std::vector<WaterDrop> g_waterDrops;
+static std::mutex g_dropMutex;
+static DWORD g_lastDropVk = 0;
+static ULONGLONG g_lastDropTick = 0;
 
 struct CrossfadeState {
     bool active = false;
@@ -31,6 +48,13 @@ struct CrossfadeState {
 };
 static std::unordered_map<DWORD, AlienFX_SDK::Afx_action> g_lastSentRgb;
 static CrossfadeState g_crossfade;
+
+static std::string TrimWhitespace(const std::string& s) {
+    size_t start = s.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = s.find_last_not_of(" \t\r\n");
+    return s.substr(start, end - start + 1);
+}
 
 static void SeedLastSentRgbIfEmpty() {
     if (!g_lastSentRgb.empty() || !conf || !conf->activeProfile) return;
@@ -79,6 +103,7 @@ static byte EffectNameToType(const std::string& eff) {
     if (eff == "morph") return AlienFX_SDK::AlienFX_A_Morph;
     if (eff == "spectrum") return AlienFX_SDK::AlienFX_A_Spectrum;
     if (eff == "rainbow" || eff == "wave" || eff == "aurora") return AlienFX_SDK::AlienFX_A_Rainbow;
+    if (eff == "summer") return EFFECT_SUMMER;
     return AlienFX_SDK::AlienFX_A_Color;
 }
 
@@ -89,6 +114,7 @@ static std::string EffectTypeToName(byte t, size_t colorCount = 1) {
     case AlienFX_SDK::AlienFX_A_Morph: return "morph";
     case AlienFX_SDK::AlienFX_A_Spectrum: return "spectrum";
     case AlienFX_SDK::AlienFX_A_Rainbow: return (colorCount >= 3) ? "aurora" : "wave";
+    case EFFECT_SUMMER: return "summer";
     default: return "static";
     }
 }
@@ -233,6 +259,7 @@ std::string CockpitBridge::BuildFullStateJson() {
     settings["startWindows"] = StartupManager::IsStartupEnabled();
     settings["startMinimized"] = (conf->startMinimized != 0);
     settings["alwaysAdmin"] = (conf->alwaysAdmin != 0);
+    settings["startupIntro"] = (conf->startupIntro != 0);
     settings["isAdmin"] = (IsUserAnAdmin() != FALSE);
     root["settings"] = settings;
 
@@ -242,7 +269,21 @@ std::string CockpitBridge::BuildFullStateJson() {
         SimpleJson::Value d = SimpleJson::Value::Object();
         d["pid"] = static_cast<int>(dev.pid);
         d["vid"] = static_cast<int>(dev.vid);
-        d["name"] = dev.name.empty() ? ("AlienFX Device 0x" + std::to_string(dev.pid)) : dev.name;
+        std::string dname = TrimWhitespace(dev.name);
+        if (dname.empty()) {
+            if (dev.vid == 0x187c) {
+                dname = "Alienware Chassis / AW-ELC (Lid & Tron)";
+            } else if (dev.vid == 0x0461 || (dev.dev && dev.dev->version == AlienFX_SDK::API_V7)) {
+                dname = "Alienware Gaming Mouse";
+            } else if (dev.vid == 0x0d62 || (dev.dev && dev.dev->version == AlienFX_SDK::API_V5)) {
+                dname = "Alienware RGB Keyboard";
+            } else {
+                char pbuf[32];
+                snprintf(pbuf, sizeof(pbuf), "AlienFX Device 0x%04X", dev.pid);
+                dname = pbuf;
+            }
+        }
+        d["name"] = dname;
         d["present"] = (dev.dev != nullptr);
         d["version"] = dev.dev ? dev.dev->version : -1;
 
@@ -391,6 +432,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     }
 
     if (cmd == "applyZoneColor" && conf && fxhl) {
+        g_probeActive = false;
         WORD pid = static_cast<WORD>(msg.get("pid").asInt(0));
         if (!pid) {
             for (const auto& d : conf->afx_dev.fxdevs) {
@@ -404,13 +446,20 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         std::string hex2 = msg.get("color2").asString("#7b2cbf");
         std::string eff = msg.get("effect").asString("static");
         byte speed = static_cast<byte>(msg.get("speed").asInt(50));
+        int zBright = std::clamp(msg.get("zoneBrightness").asInt(100), 5, 100);
         std::string zoneName = msg.get("zoneName").asString("Custom Zone");
         const auto& lightIds = msg.get("lightIds").arrVal;
+
+        auto scaleChan = [zBright](byte v) -> byte {
+            return static_cast<byte>(std::clamp(static_cast<int>(std::lround(v * (zBright / 100.0))), 0, 255));
+        };
 
         byte r1 = 0, g1 = 240, b1 = 255;
         byte r2 = 123, g2 = 44, b2 = 191;
         HexToRgb(hex1, r1, g1, b1);
         HexToRgb(hex2, r2, g2, b2);
+        r1 = scaleChan(r1); g1 = scaleChan(g1); b1 = scaleChan(b1);
+        r2 = scaleChan(r2); g2 = scaleChan(g2); b2 = scaleChan(b2);
 
         if (!conf->activeProfile) {
             conf->activeProfile = conf->FindDefaultProfile();
@@ -598,7 +647,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 HexToRgb(hex3, r3, g3, b3);
                 AlienFX_SDK::Afx_action act3{};
                 act3.type = act1.type;
-                act3.r = r3; act3.g = g3; act3.b = b3;
+                act3.r = scaleChan(r3); act3.g = scaleChan(g3); act3.b = scaleChan(b3);
                 act3.tempo = speed;
                 act3.time = 5;
                 targetSet->color.push_back(act3);
@@ -633,6 +682,49 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 nl.name = name;
                 dev->lights.push_back(nl);
                 conf->afx_dev.SaveMappings();
+                if (fxhl) {
+                    fxhl->SetState(true);
+                }
+            }
+        }
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "removeLight" && conf) {
+        WORD pid = static_cast<WORD>(msg.get("pid").asInt(0));
+        byte lid = static_cast<byte>(msg.get("lightId").asInt(0));
+        AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
+        if (dev) {
+            conf->modifyProfile.lockWrite();
+            for (auto lit = dev->lights.begin(); lit != dev->lights.end(); ) {
+                if (lit->lightid == lid) lit = dev->lights.erase(lit);
+                else ++lit;
+            }
+            if (auto* groupsVec = conf->afx_dev.GetGroups()) {
+                for (auto& g : *groupsVec) {
+                    for (auto git = g.lights.begin(); git != g.lights.end(); ) {
+                        if (git->did == pid && git->lid == lid) git = g.lights.erase(git);
+                        else ++git;
+                    }
+                }
+            }
+            for (auto* prof : conf->profiles) {
+                if (!prof) continue;
+                for (auto it = prof->lightsets.begin(); it != prof->lightsets.end(); ) {
+                    AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(it->group);
+                    if (!grp || grp->lights.empty()) it = prof->lightsets.erase(it);
+                    else ++it;
+                }
+            }
+            conf->modifyProfile.unlockWrite();
+            conf->afx_dev.SaveMappings();
+            conf->Save();
+            if (fxhl && !g_probeActive) {
+                fxhl->SetState(true);
+                fxhl->deferV5Refresh = true;
+                fxhl->ClearAndRefresh(true);
+                fxhl->deferV5Refresh = false;
+                CockpitBridge::StepAnimatedEffects();
             }
         }
         return BuildFullStateJson();
@@ -645,6 +737,35 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         if (dev) {
             fxhl->TestLight(dev, lid, true);
         }
+        return "{\"ok\":true}";
+    }
+
+    if (cmd == "probeLed" && conf && fxhl) {
+        WORD pid = static_cast<WORD>(msg.get("pid").asInt(0));
+        int lid = std::clamp(msg.get("lightId").asInt(0), 0, 255);
+        AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
+        g_probeActive = true;
+        g_introActive = false;
+        if (dev) {
+            fxhl->ProbeLight(dev, lid);
+        }
+        return "{\"ok\":true,\"probing\":true}";
+    }
+
+    if (cmd == "endProbe" && conf && fxhl) {
+        g_probeActive = false;
+        fxhl->oldtest = -1;
+        BeginCrossfade(500);
+        fxhl->SetState(true);
+        fxhl->deferV5Refresh = true;
+        fxhl->ClearAndRefresh(true);
+        fxhl->deferV5Refresh = false;
+        CockpitBridge::StepAnimatedEffects();
+        return "{\"ok\":true,\"probing\":false}";
+    }
+
+    if (cmd == "testIntro") {
+        CockpitBridge::TriggerStartupIntro();
         return "{\"ok\":true}";
     }
 
@@ -676,6 +797,15 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             }
             conf->afx_dev.SaveMappings();
             conf->Save();
+            if (fxhl) {
+                fxhl->SetState(true);
+                if (!g_probeActive) {
+                    fxhl->deferV5Refresh = true;
+                    fxhl->ClearAndRefresh(true);
+                    fxhl->deferV5Refresh = false;
+                    CockpitBridge::StepAnimatedEffects();
+                }
+            }
         }
         return BuildFullStateJson();
     }
@@ -904,6 +1034,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             if (StartupManager::IsStartupEnabled())
                 StartupManager::SetStartupEnabled(true, conf->startMinimized != 0, conf->alwaysAdmin != 0);
         }
+        if (msg.has("startupIntro")) conf->startupIntro = msg.get("startupIntro").asBool(true) ? 1 : 0;
         if (msg.has("gammaCorrection")) conf->gammaCorrection = msg.get("gammaCorrection").asBool(true) ? 1 : 0;
         if (msg.has("enableProfSwitch")) conf->enableProfSwitch = msg.get("enableProfSwitch").asBool(true) ? 1 : 0;
         if (msg.has("enableEffects")) conf->enableEffects = msg.get("enableEffects").asBool(true) ? 1 : 0;
@@ -961,11 +1092,193 @@ static void GetDarfonKeyXY(byte lid, double& nx, double& ny) {
     else { nx = (lid % 8) / 7.0; ny = 0.5; }
 }
 
+static void VkToKeyXY(DWORD vk, double& nx, double& ny) {
+    nx = 0.42; ny = 0.52;
+    switch (vk) {
+    case VK_ESCAPE: nx = 0.0 / 19.0; ny = 0.0; break;
+    case VK_F1: case VK_F2: case VK_F3: case VK_F4: case VK_F5: case VK_F6:
+    case VK_F7: case VK_F8: case VK_F9: case VK_F10: case VK_F11: case VK_F12:
+        nx = (1.0 + (vk - VK_F1)) / 19.0; ny = 0.0; break;
+    case VK_HOME: nx = 13.0 / 19.0; ny = 0.0; break;
+    case VK_END: nx = 14.0 / 19.0; ny = 0.0; break;
+    case VK_DELETE: nx = 15.0 / 19.0; ny = 0.0; break;
+    case VK_OEM_3: nx = 0.0 / 19.0; ny = 0.2; break;
+    case '1': case '2': case '3': case '4': case '5':
+    case '6': case '7': case '8': case '9':
+        nx = (1.0 + (vk - '1')) / 19.0; ny = 0.2; break;
+    case '0': nx = 10.0 / 19.0; ny = 0.2; break;
+    case VK_OEM_MINUS: nx = 11.0 / 19.0; ny = 0.2; break;
+    case VK_OEM_PLUS: nx = 12.0 / 19.0; ny = 0.2; break;
+    case VK_BACK: nx = 14.0 / 19.0; ny = 0.2; break;
+    case VK_NUMLOCK: nx = 16.0 / 19.0; ny = 0.2; break;
+    case VK_DIVIDE: nx = 17.0 / 19.0; ny = 0.2; break;
+    case VK_MULTIPLY: nx = 18.0 / 19.0; ny = 0.2; break;
+    case VK_SUBTRACT: nx = 19.0 / 19.0; ny = 0.2; break;
+    case VK_TAB: nx = 0.5 / 19.0; ny = 0.4; break;
+    case 'Q': nx = 2.0 / 19.0; ny = 0.4; break;
+    case 'W': nx = 3.0 / 19.0; ny = 0.4; break;
+    case 'E': nx = 4.0 / 19.0; ny = 0.4; break;
+    case 'R': nx = 5.0 / 19.0; ny = 0.4; break;
+    case 'T': nx = 6.0 / 19.0; ny = 0.4; break;
+    case 'Y': nx = 7.0 / 19.0; ny = 0.4; break;
+    case 'U': nx = 8.0 / 19.0; ny = 0.4; break;
+    case 'I': nx = 9.0 / 19.0; ny = 0.4; break;
+    case 'O': nx = 10.0 / 19.0; ny = 0.4; break;
+    case 'P': nx = 11.0 / 19.0; ny = 0.4; break;
+    case VK_OEM_4: nx = 12.0 / 19.0; ny = 0.4; break;
+    case VK_OEM_6: nx = 13.0 / 19.0; ny = 0.4; break;
+    case VK_OEM_5: nx = 14.5 / 19.0; ny = 0.4; break;
+    case VK_NUMPAD7: nx = 16.0 / 19.0; ny = 0.4; break;
+    case VK_NUMPAD8: nx = 17.0 / 19.0; ny = 0.4; break;
+    case VK_NUMPAD9: nx = 18.0 / 19.0; ny = 0.4; break;
+    case VK_CAPITAL: nx = 0.5 / 19.0; ny = 0.6; break;
+    case 'A': nx = 2.0 / 19.0; ny = 0.6; break;
+    case 'S': nx = 3.0 / 19.0; ny = 0.6; break;
+    case 'D': nx = 4.0 / 19.0; ny = 0.6; break;
+    case 'F': nx = 5.0 / 19.0; ny = 0.6; break;
+    case 'G': nx = 6.0 / 19.0; ny = 0.6; break;
+    case 'H': nx = 7.0 / 19.0; ny = 0.6; break;
+    case 'J': nx = 8.0 / 19.0; ny = 0.6; break;
+    case 'K': nx = 9.0 / 19.0; ny = 0.6; break;
+    case 'L': nx = 10.0 / 19.0; ny = 0.6; break;
+    case VK_OEM_1: nx = 11.0 / 19.0; ny = 0.6; break;
+    case VK_OEM_7: nx = 12.0 / 19.0; ny = 0.6; break;
+    case VK_RETURN: nx = 14.0 / 19.0; ny = 0.6; break;
+    case VK_NUMPAD4: nx = 16.0 / 19.0; ny = 0.6; break;
+    case VK_NUMPAD5: nx = 17.0 / 19.0; ny = 0.6; break;
+    case VK_NUMPAD6: nx = 18.0 / 19.0; ny = 0.6; break;
+    case VK_ADD: nx = 19.0 / 19.0; ny = 0.5; break;
+    case VK_SHIFT: case VK_LSHIFT: nx = 0.8 / 19.0; ny = 0.8; break;
+    case 'Z': nx = 3.0 / 19.0; ny = 0.8; break;
+    case 'X': nx = 4.0 / 19.0; ny = 0.8; break;
+    case 'C': nx = 5.0 / 19.0; ny = 0.8; break;
+    case 'V': nx = 6.0 / 19.0; ny = 0.8; break;
+    case 'B': nx = 7.0 / 19.0; ny = 0.8; break;
+    case 'N': nx = 8.0 / 19.0; ny = 0.8; break;
+    case 'M': nx = 9.0 / 19.0; ny = 0.8; break;
+    case VK_OEM_COMMA: nx = 10.0 / 19.0; ny = 0.8; break;
+    case VK_OEM_PERIOD: nx = 11.0 / 19.0; ny = 0.8; break;
+    case VK_OEM_2: nx = 12.0 / 19.0; ny = 0.8; break;
+    case VK_RSHIFT: nx = 13.5 / 19.0; ny = 0.8; break;
+    case VK_UP: nx = 14.5 / 19.0; ny = 0.8; break;
+    case VK_NUMPAD1: nx = 16.0 / 19.0; ny = 0.8; break;
+    case VK_NUMPAD2: nx = 17.0 / 19.0; ny = 0.8; break;
+    case VK_NUMPAD3: nx = 18.0 / 19.0; ny = 0.8; break;
+    case VK_CONTROL: case VK_LCONTROL: nx = 0.0 / 19.0; ny = 1.0; break;
+    case VK_LWIN: nx = 2.0 / 19.0; ny = 1.0; break;
+    case VK_MENU: case VK_LMENU: nx = 4.0 / 19.0; ny = 1.0; break;
+    case VK_SPACE: nx = 6.5 / 19.0; ny = 1.0; break;
+    case VK_RMENU: nx = 10.5 / 19.0; ny = 1.0; break;
+    case VK_RWIN: case VK_RCONTROL: nx = 12.0 / 19.0; ny = 1.0; break;
+    case VK_LEFT: nx = 13.5 / 19.0; ny = 1.0; break;
+    case VK_DOWN: nx = 14.5 / 19.0; ny = 1.0; break;
+    case VK_RIGHT: nx = 15.5 / 19.0; ny = 1.0; break;
+    case VK_NUMPAD0: nx = 16.5 / 19.0; ny = 1.0; break;
+    case VK_DECIMAL: nx = 18.0 / 19.0; ny = 1.0; break;
+    default: break;
+    }
+}
+
+void CockpitBridge::TriggerStartupIntro() {
+    if (!conf || !conf->lightsOn || !conf->stateOn) return;
+    g_probeActive = false;
+    g_introActive = true;
+    g_introStartMs = GetTickCount64();
+}
+
+void CockpitBridge::NotifyKeyPress(unsigned long vkCode) {
+    ULONGLONG nowMs = GetTickCount64();
+    if (vkCode == g_lastDropVk && (nowMs - g_lastDropTick) < 110) return;
+    g_lastDropVk = vkCode;
+    g_lastDropTick = nowMs;
+
+    double kx = 0.5, ky = 0.5;
+    VkToKeyXY(static_cast<DWORD>(vkCode), kx, ky);
+
+    std::lock_guard<std::mutex> lock(g_dropMutex);
+    g_waterDrops.erase(
+        std::remove_if(g_waterDrops.begin(), g_waterDrops.end(),
+            [nowMs](const WaterDrop& d) { return (nowMs - d.startMs) > 2200; }),
+        g_waterDrops.end());
+    if (g_waterDrops.size() >= 12) {
+        g_waterDrops.erase(g_waterDrops.begin());
+    }
+    g_waterDrops.push_back({ kx, ky, nowMs });
+}
+
+bool CockpitBridge::IsSummerEffectActive() {
+    if (!conf || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return false;
+    conf->modifyProfile.lockRead();
+    bool active = false;
+    for (const auto& ls : conf->activeProfile->lightsets) {
+        if (!ls.color.empty() && ls.color[0].type == EFFECT_SUMMER) {
+            active = true;
+            break;
+        }
+    }
+    conf->modifyProfile.unlockRead();
+    return active;
+}
+
 void CockpitBridge::StepAnimatedEffects() {
     if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return;
+    if (g_probeActive) return;
 
     ULONGLONG nowMs = GetTickCount64();
     double nowSec = static_cast<double>(nowMs) / 1000.0;
+
+    if (g_introActive) {
+        ULONGLONG elapsed = (nowMs >= g_introStartMs) ? (nowMs - g_introStartMs) : 0;
+        double p = static_cast<double>(elapsed) / 2600.0;
+        if (p < 1.0) {
+            double sweepX = (p < 0.65)
+                ? ((p / 0.65) * 1.45 - 0.2)
+                : (1.25 - ((p - 0.65) / 0.35) * 1.45);
+            bool introUpdated = false;
+            for (const auto& dev : conf->afx_dev.fxdevs) {
+                if (!dev.present || !dev.dev) continue;
+                if (dev.dev->version != AlienFX_SDK::API_V5 &&
+                    dev.dev->version != AlienFX_SDK::API_ACPI) {
+                    continue;
+                }
+                fxhl->modifyQuery.lockRead();
+                auto qIt = fxhl->devLightQuery.find(dev.pid);
+                size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
+                fxhl->modifyQuery.unlockRead();
+                if (qSize > 0 && hEvt) SetEvent(hEvt);
+                if (qSize > 16) continue;
+
+                for (const auto& l : dev.lights) {
+                    if (l.flags & ALIENFX_FLAG_POWER) continue;
+                    double nx = 0.0, ny = 0.0;
+                    GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
+                    double d = std::fabs((nx * 0.88 + ny * 0.22) - sweepX);
+                    double beam = std::exp(-(d * d) / 0.02);
+                    double tail = 0.22 * (1.0 - p) * (0.5 + 0.5 * std::sin(p * 12.0 + nx * 4.5));
+                    double v = std::clamp(beam + tail, 0.0, 1.0);
+                    double hue = 185.0 + 95.0 * std::sin(p * 6.2831853 + nx * 2.4);
+
+                    AlienFX_SDK::Afx_action frame{};
+                    frame.type = AlienFX_SDK::AlienFX_A_Color;
+                    HsvToRgb(hue, 0.92, v, frame.r, frame.g, frame.b);
+
+                    DWORD lgh = MAKELONG(dev.pid, l.lightid);
+                    g_lastSentRgb[lgh] = frame;
+                    std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+                    fxhl->SetLight(lgh, &acts);
+                    introUpdated = true;
+                }
+            }
+            if (introUpdated) {
+                fxhl->QueryUpdate();
+            }
+            return;
+        }
+        g_introActive = false;
+        BeginCrossfade(650);
+    }
+
     bool isFading = g_crossfade.active;
     double fadeT = 1.0;
     if (isFading) {
@@ -975,6 +1288,17 @@ void CockpitBridge::StepAnimatedEffects() {
             : 1.0;
         double inv = 1.0 - rawT;
         fadeT = 1.0 - (inv * inv * inv);
+    }
+
+    // Snapshot active water drops outside lock so Summer wave stays zero-contention
+    std::vector<WaterDrop> dropsSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_dropMutex);
+        g_waterDrops.erase(
+            std::remove_if(g_waterDrops.begin(), g_waterDrops.end(),
+                [nowMs](const WaterDrop& d) { return (nowMs - d.startMs) > 2000; }),
+            g_waterDrops.end());
+        dropsSnapshot = g_waterDrops;
     }
 
     bool anyUpdated = false;
@@ -1017,8 +1341,12 @@ void CockpitBridge::StepAnimatedEffects() {
                 fxhl->modifyQuery.lockRead();
                 auto qIt = fxhl->devLightQuery.find(dev->pid);
                 size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
                 fxhl->modifyQuery.unlockRead();
-                bool skipDev = (!finalSettleFrame && qSize >= 1) || (qSize > 300);
+                if (qSize > 0 && hEvt) {
+                    SetEvent(hEvt);
+                }
+                bool skipDev = (!finalSettleFrame && qSize > 12) || (qSize > 250);
                 busyIt = devBusy.emplace(dev->pid, skipDev).first;
             }
             if (busyIt->second) {
@@ -1037,6 +1365,38 @@ void CockpitBridge::StepAnimatedEffects() {
                 double w2 = 0.5 + 0.5 * std::sin(angle * 0.67 - nx * 1.7 + ny * 1.1 + 1.9);
                 AlienFX_SDK::Afx_action mix12 = LerpColor(c1, c2, w1);
                 frame = LerpColor(mix12, c3, w2 * 0.65);
+            } else if (effType == EFFECT_SUMMER) {
+                double shimmer = 0.48 + 0.09 * (0.5 + 0.5 * std::sin(angle * 0.85 + nx * 3.1 - ny * 2.2));
+                AlienFX_SDK::Afx_action waterBase{ 0 };
+                waterBase.r = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1.r : 42;
+                waterBase.g = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1.g : 196;
+                waterBase.b = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1.b : 255;
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, waterBase, shimmer);
+
+                double waveEnergy = 0.0;
+                for (const auto& drop : dropsSnapshot) {
+                    double ageSec = static_cast<double>(nowMs - drop.startMs) / 1000.0;
+                    if (ageSec < 0.0 || ageSec > 1.85) continue;
+                    double dist = std::hypot((nx - drop.x) * 1.85, (ny - drop.y));
+                    double radius = ageSec * (0.72 + tNorm * 0.85);
+                    double env = 1.0 - std::clamp(ageSec / 1.85, 0.0, 1.0);
+                    env *= env;
+                    double ring1 = std::exp(-((dist - radius) * (dist - radius)) / 0.032);
+                    double ring2 = (radius > 0.28)
+                        ? 0.45 * std::exp(-((dist - (radius - 0.28)) * (dist - (radius - 0.28))) / 0.025)
+                        : 0.0;
+                    double splash = (ageSec < 0.25 && dist < 0.22) ? (1.0 - ageSec / 0.25) * (1.0 - dist / 0.22) : 0.0;
+                    waveEnergy += (ring1 + ring2 + splash) * env;
+                }
+                if (waveEnergy > 0.001) {
+                    AlienFX_SDK::Afx_action crest{};
+                    crest.type = AlienFX_SDK::AlienFX_A_Color;
+                    crest.r = 165;
+                    crest.g = 248;
+                    crest.b = 255;
+                    frame = LerpColor(frame, crest, std::clamp(waveEnergy, 0.0, 1.0));
+                }
             } else if (effType == AlienFX_SDK::AlienFX_A_Breathing) {
                 double k = 0.05 + 0.95 * (0.5 - 0.5 * std::cos(angle));
                 AlienFX_SDK::Afx_action dark{ 0 };

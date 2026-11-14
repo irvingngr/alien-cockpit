@@ -8,4 +8,7 @@ public:
     static std::string BuildTelemetryJson();
     static std::string BuildFullStateJson();
     static void StepAnimatedEffects();
+    static void TriggerStartupIntro();
+    static void NotifyKeyPress(unsigned long vkCode);
+    static bool IsSummerEffectActive();
 };

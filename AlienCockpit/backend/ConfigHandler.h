@@ -174,6 +174,7 @@ public:
 	DWORD startWindows;
 	DWORD startMinimized;
 	DWORD alwaysAdmin;
+	DWORD startupIntro;
 	DWORD updateCheck;
 	DWORD lightsOn;
 	DWORD dimmed;

@@ -149,6 +149,41 @@ void FXHelper::TestLight(AlienFX_SDK::Afx_device* dev, int id, bool force, bool 
 	DebugPrint("\n");
 }
 
+void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
+{
+	if (!dev || !dev->present || !dev->dev) return;
+	AlienFX_SDK::Afx_action off{ 0 };
+	AlienFX_SDK::Afx_action red{ 0 };
+	red.r = 255;
+
+	if (!dev->lights.empty()) {
+		vector<byte> opLights;
+		for (auto lIter = dev->lights.begin(); lIter != dev->lights.end(); lIter++) {
+			if ((int)lIter->lightid != id && !(lIter->flags & ALIENFX_FLAG_POWER))
+				opLights.push_back((byte)lIter->lightid);
+		}
+		if (!opLights.empty()) {
+			dev->dev->SetMultiColor(&opLights, off);
+			dev->dev->UpdateColors();
+		}
+	}
+	if (oldtest >= 0 && oldtest != id) {
+		dev->dev->SetColor((byte)oldtest, off);
+	}
+	if (id >= 0) {
+		// Ensure API_V4 unmapped channels are energized too
+		if (dev->dev->version == AlienFX_SDK::API_V4) {
+			vector<AlienFX_SDK::Afx_light> tempProbe{ { (byte)id, { 0, 0 }, "Probe" } };
+			dev->dev->SetBrightness((byte)(finalBrightness > 0 ? finalBrightness : 255), dev->brightness, &tempProbe, true);
+		}
+		dev->dev->SetColor((byte)id, red);
+		oldtest = id;
+	} else {
+		oldtest = -1;
+	}
+	dev->dev->UpdateColors();
+}
+
 bool FXHelper::CheckEvent(LightEventData* eData, event* e) {
 	switch (e->source) {
 	case 0: return eData->HDD;
@@ -208,8 +243,8 @@ void FXHelper::QueryCommand(WORD pid, LightQueryElement &lqe) {
 			}
 			modifyQuery.lockWrite();
 			devQuery->lightQuery.push(lqe);
-			modifyQuery.unlockWrite();
 			SetEvent(devQuery->haveNewElement);
+			modifyQuery.unlockWrite();
 		}
 		else
 			wasLFX = true;
@@ -253,13 +288,18 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 			if (!isPowerLight && dev->dev &&
 				dev->dev->version != AlienFX_SDK::API_V5 && dev->dev->version != AlienFX_SDK::API_ACPI &&
 				action->type != AlienFX_SDK::AlienFX_A_Color) {
+				// Convert custom software effects (e.g. Summer = 7) safely to static color on hardware controllers
+				if (action->type > AlienFX_SDK::AlienFX_A_Power) {
+					action->type = AlienFX_SDK::AlienFX_A_Color;
+				}
 				// Convert Aurora 3-color Rainbow placeholder into smooth multi-phase hardware Morph on V4 chassis controllers
 				if (dev->dev->version == AlienFX_SDK::API_V4 && newBlock.actsize >= 3 &&
 					action->type == AlienFX_SDK::AlienFX_A_Rainbow) {
 					action->type = AlienFX_SDK::AlienFX_A_Morph;
 				}
 				// UI speed is 1 (slowest) .. 100 (fastest); legacy V2/V3/V4/V6 hardware tempo is inverse delay (higher = slower)
-				if (dev->dev->version <= AlienFX_SDK::API_V4 || dev->dev->version == AlienFX_SDK::API_V6) {
+				if (action->type != AlienFX_SDK::AlienFX_A_Color &&
+					(dev->dev->version <= AlienFX_SDK::API_V4 || dev->dev->version == AlienFX_SDK::API_V6)) {
 					int uiSpeed = max(1, min(100, (int)action->tempo));
 					action->tempo = (byte)max(12, min(220, 222 - uiSpeed * 2));
 					action->time = (byte)max(10, min(70, 68 - uiSpeed / 2));
@@ -742,8 +782,13 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
 	while (WaitForMultipleObjects(2, waitArray, false, INFINITE) == WAIT_OBJECT_0) {
-		while ( lightQuery->lightQuery.size()) {
+		while (true) {
 			src->modifyQuery.lockWrite();
+			if (lightQuery->lightQuery.empty()) {
+				ResetEvent(lightQuery->haveNewElement);
+				src->modifyQuery.unlockWrite();
+				break;
+			}
 			current = lightQuery->lightQuery.front();
 			lightQuery->lightQuery.pop();
 			src->modifyQuery.unlockWrite();
@@ -824,7 +869,6 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 			}
 			}
 		}
-		ResetEvent(lightQuery->haveNewElement);
 	}
 	delete ld;
 	return 0;

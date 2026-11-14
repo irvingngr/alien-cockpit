@@ -59,6 +59,19 @@ static const UINT_PTR TIMER_TELEMETRY = 1;
 static const UINT_PTR TIMER_EFFECTS = 2;
 static std::vector<BatteryDeviceInfo> g_cachedBatteries;
 static ULONGLONG g_lastBatteryScanTick = 0;
+static HHOOK g_kbdHook = nullptr;
+
+static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
+        if (CockpitBridge::IsSummerEffectActive()) {
+            const KBDLLHOOKSTRUCT* kbd = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
+            if (kbd) {
+                CockpitBridge::NotifyKeyPress(kbd->vkCode);
+            }
+        }
+    }
+    return CallNextHookEx(g_kbdHook, nCode, wParam, lParam);
+}
 
 static bool RelaunchAsAdmin(HWND hwnd, bool minimized) {
     wchar_t exePath[MAX_PATH]{};
@@ -258,6 +271,12 @@ static void EnsureDefaultDeviceMappings() {
         if (!dev.present) continue;
 
         bool isDarfonKeyboard = (dev.vid == 0x0D62) || (dev.dev && dev.dev->version == AlienFX_SDK::API_V5);
+        bool isMouseDevice = (dev.vid == 0x0461) ||
+            (dev.dev && dev.dev->version == AlienFX_SDK::API_V7) ||
+            (dev.name.find("610M") != std::string::npos) ||
+            (dev.name.find("Mouse") != std::string::npos) ||
+            (dev.name.find("mouse") != std::string::npos);
+
         bool hasPlaceholder = std::any_of(dev.lights.begin(), dev.lights.end(),
             [](const AlienFX_SDK::Afx_light& l) {
                 return l.name.rfind("LED Zone ", 0) == 0 || l.name.rfind("Light ", 0) == 0;
@@ -265,60 +284,78 @@ static void EnsureDefaultDeviceMappings() {
         bool allZeroScancode = !dev.lights.empty() && std::all_of(dev.lights.begin(), dev.lights.end(),
             [](const AlienFX_SDK::Afx_light& l) { return l.scancode == 0; });
         bool needsUpgrade = dev.lights.empty() ||
-            (isDarfonKeyboard && (hasPlaceholder || dev.lights.size() <= 20 || allZeroScancode));
+            (isDarfonKeyboard && (hasPlaceholder || dev.lights.size() <= 20 || allZeroScancode)) ||
+            (isMouseDevice && (hasPlaceholder || dev.lights.size() > 8));
 
         if (needsUpgrade) {
             dev.lights.clear();
 
-            // 1. Try matching vid/pid in Mappings/devices.csv (first matching block)
-            std::ifstream file(csvPathUtf8);
-            if (file.is_open()) {
-                std::string line;
-                bool inMatchingDevice = false;
-                bool foundDevice = false;
-                while (std::getline(file, line)) {
-                    if (line.empty()) continue;
-                    std::vector<std::string> cols = ParseCsvLine(line);
-                    if (cols.empty()) continue;
+            if (!isMouseDevice) {
+                // 1. Try matching vid/pid in Mappings/devices.csv (first matching block)
+                std::ifstream file(csvPathUtf8);
+                if (file.is_open()) {
+                    std::string line;
+                    bool inMatchingDevice = false;
+                    bool foundDevice = false;
+                    while (std::getline(file, line)) {
+                        if (line.empty()) continue;
+                        std::vector<std::string> cols = ParseCsvLine(line);
+                        if (cols.empty()) continue;
 
-                    if (cols[0] == "0" && cols.size() >= 4) {
-                        if (foundDevice) break;
-                        int fvid = std::atoi(cols[1].c_str());
-                        int fpid = std::atoi(cols[2].c_str());
-                        inMatchingDevice = (fvid == dev.vid && fpid == dev.pid);
-                        if (inMatchingDevice) foundDevice = true;
-                    } else if (cols[0] == "3") {
-                        if (inMatchingDevice) break;
-                        inMatchingDevice = false;
-                    } else if (inMatchingDevice && cols[0] == "1" && cols.size() >= 4) {
-                        byte lid = static_cast<byte>(std::atoi(cols[1].c_str()));
-                        bool dup = std::any_of(dev.lights.begin(), dev.lights.end(),
-                            [lid](const AlienFX_SDK::Afx_light& x) { return x.lightid == lid; });
-                        if (dup) continue;
+                        if (cols[0] == "0" && cols.size() >= 4) {
+                            if (foundDevice) break;
+                            int fvid = std::atoi(cols[1].c_str());
+                            int fpid = std::atoi(cols[2].c_str());
+                            inMatchingDevice = (fvid == dev.vid && fpid == dev.pid);
+                            if (inMatchingDevice) foundDevice = true;
+                        } else if (cols[0] == "3") {
+                            if (inMatchingDevice) break;
+                            inMatchingDevice = false;
+                        } else if (inMatchingDevice && cols[0] == "1" && cols.size() >= 4) {
+                            byte lid = static_cast<byte>(std::atoi(cols[1].c_str()));
+                            bool dup = std::any_of(dev.lights.begin(), dev.lights.end(),
+                                [lid](const AlienFX_SDK::Afx_light& x) { return x.lightid == lid; });
+                            if (dup) continue;
 
-                        AlienFX_SDK::Afx_light l{};
-                        l.lightid = lid;
-                        l.data = static_cast<DWORD>(std::strtoul(cols[2].c_str(), nullptr, 10));
-                        l.name = cols[3];
-                        if (isDarfonKeyboard) {
-                            for (const auto& dk : darfonTemplate) {
-                                if (dk.lightid == l.lightid) {
-                                    if (l.scancode == 0) l.scancode = dk.scancode;
-                                    if (l.name.empty() || l.name.rfind("Light ", 0) == 0) l.name = dk.name;
-                                    break;
+                            AlienFX_SDK::Afx_light l{};
+                            l.lightid = lid;
+                            l.data = static_cast<DWORD>(std::strtoul(cols[2].c_str(), nullptr, 10));
+                            l.name = cols[3];
+                            if (isDarfonKeyboard) {
+                                for (const auto& dk : darfonTemplate) {
+                                    if (dk.lightid == l.lightid) {
+                                        if (l.scancode == 0) l.scancode = dk.scancode;
+                                        if (l.name.empty() || l.name.rfind("Light ", 0) == 0) l.name = dk.name;
+                                        break;
+                                    }
                                 }
                             }
+                            dev.lights.push_back(l);
+                            anyAdded = true;
                         }
-                        dev.lights.push_back(l);
-                        anyAdded = true;
                     }
                 }
             }
 
-            // 2. Fallback: full per-key layout for Darfon/API_V5 keyboards, or 0..15 zones for other devices
+            // 2. Fallback: full per-key layout for Darfon keyboards, 3 AWCC zones for mice, or 0..15 for chassis
             if (dev.lights.empty()) {
                 if (isDarfonKeyboard) {
                     dev.lights = darfonTemplate;
+                    anyAdded = true;
+                } else if (isMouseDevice) {
+                    struct MouseZoneDef { byte id; const char* name; };
+                    static const MouseZoneDef kMouseZones[] = {
+                        { 0, "Side Strips & Wheel" },
+                        { 1, "Mouse Logo" },
+                        { 2, "DPI Indicator" }
+                    };
+                    for (const auto& mz : kMouseZones) {
+                        AlienFX_SDK::Afx_light l{};
+                        l.lightid = mz.id;
+                        l.flags = 0;
+                        l.name = mz.name;
+                        dev.lights.push_back(l);
+                    }
                     anyAdded = true;
                 } else {
                     for (byte i = 0; i < 16; ++i) {
@@ -330,6 +367,25 @@ static void EnsureDefaultDeviceMappings() {
                     }
                     anyAdded = true;
                 }
+            }
+        }
+
+        // Upgrade legacy 2-zone AW610M CSV entry ("Mouse Light" + "Mouse Logo") to full 3-zone layout
+        if (isMouseDevice && dev.lights.size() == 2) {
+            bool hasLegacy0 = std::any_of(dev.lights.begin(), dev.lights.end(),
+                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 0 && l.name == "Mouse Light"; });
+            bool hasDpi2 = std::any_of(dev.lights.begin(), dev.lights.end(),
+                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 2; });
+            if (hasLegacy0 && !hasDpi2) {
+                for (auto& l : dev.lights) {
+                    if (l.lightid == 0) l.name = "Side Strips & Wheel";
+                }
+                AlienFX_SDK::Afx_light dpi{};
+                dpi.lightid = 2;
+                dpi.flags = 0;
+                dpi.name = "DPI Indicator";
+                dev.lights.push_back(dpi);
+                anyAdded = true;
             }
         }
 
@@ -387,6 +443,7 @@ static void ShowTrayMenu(HWND hwnd) {
 
     if (conf) {
         for (size_t i = 0; i < conf->profiles.size() && i < 20; ++i) {
+            if (conf->profiles[i]->id == 9999) continue;
             UINT flags = MF_STRING;
             if (conf->activeProfile && conf->activeProfile->id == conf->profiles[i]->id)
                 flags |= MF_CHECKED;
@@ -772,6 +829,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     InitWebView(hwnd);
     SetTimer(hwnd, TIMER_TELEMETRY, 1500, nullptr);
     SetTimer(hwnd, TIMER_EFFECTS, 33, nullptr);
+    if (conf->startupIntro && conf->lightsOn) {
+        CockpitBridge::TriggerStartupIntro();
+    }
+    g_kbdHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInst, 0);
 
     if (!startMin) {
         ShowWindow(hwnd, nCmdShow ? nCmdShow : SW_SHOWNORMAL);
@@ -783,6 +844,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+    }
+
+    if (g_kbdHook) {
+        UnhookWindowsHookEx(g_kbdHook);
+        g_kbdHook = nullptr;
     }
 
     // Graceful shutdown

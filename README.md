@@ -24,13 +24,14 @@ You do **not** need Visual Studio or any compiler to use AlienCockpit:
 
 - **Ultra-Low Resource Usage**: Native C++20 core with minimal memory footprint and no background bloatware compared to AWCC.
 - **Intuitive Visual RGB Studio**
-  - Interactive **Full-Size Keyboard** (including Numpad & `⏻ Power Button`), **RGB Touchpad**, **Gaming Mouse**, and **Chassis** visual maps that reflect live hardware state.
-  - Smooth 30fps crossfade transitions & speed-calibrated effects: `Static`, `Breathing`, `Pulse`, `Morph`, `Spectrum`, `Wave`, and **`Aurora 2025`** multi-color palettes.
-  - Non-destructive **Game & Theme Presets** (`Cyberpunk 2077`, `Aurora Borealis`, `Crimson Halo`, etc.) with 1-click **`Reset to Lighting Studio`**.
-  - **1-Click Hardware LED Mapper**: Blink any physical LED to locate it and bind custom zones (`Bind → Touchpad`, `Bind → Power Btn`).
+  - Interactive **Full-Size Keyboard** (including Numpad & `⏻ Power Button`), **RGB Touchpad**, **AWCC 3-Zone Gaming Mouse** (`Side Strips & Wheel`, `Mouse Logo`, `DPI Indicator`), and **Laptop Lid / Chassis** visual maps that reflect live hardware state.
+  - Individual **Key / Zone Brightness** alongside global **Master Brightness**, plus a **Startup Keyboard Intro Animation** (with optional toggle in `System & Boot`).
+  - Smooth continuous 30fps animations & speed-calibrated effects: `Static`, `Breathing`, `Pulse`, `Morph`, `Spectrum`, `Wave`, **`Aurora`** multi-color palettes, and **`Summer`** interactive beach-sky water-drop ripple wave reacting to real keystrokes.
+  - Non-destructive **Game & Theme Presets** (`Cyberpunk 2077`, `Aurora Borealis`, `Crimson Stealth`, etc.) with 1-click **`Reset to Lighting Studio`**.
+  - **Interactive Hardware LED Probe Deck**: Toggle red-signal hardware probing (`◀` / `▶`) directly beneath the visual keyboard to visually identify any physical LED ID, **`+ Add LED`**, **`✕ Remove`**, or bind **`→ Touchpad`** / **`→ Power Btn`** without losing your profile.
 - **Thermals, Fans & Power Modes (`AlienFan-SDK`)**
-  - Live CPU/GPU/ambient temperature sensors and fan RPM telemetry.
-  - Interactive drag-and-drop **Fan Curve Editor** and quick power profile switching (`Quiet`, `Balanced`, `Performance`, `Full Speed`).
+  - Live CPU/GPU/ambient temperature sensors and animated spinning **Cooling Fan Rotors** driven by live RPM telemetry.
+  - High-precision drag-and-drop **Interactive Fan Curve Editor** with active preset detection (`Silent`, `Balanced`, `Gaming`, `Max Cooling`, or `Custom`).
 - **Connected Device Battery Telemetry**
   - Displays real-time laptop battery percentage and charging status, plus wireless HID / Bluetooth / Windows Battery Class peripherals.
 - **Profiles & Automation**
@@ -76,6 +77,6 @@ You do **not** need Visual Studio or any compiler to use AlienCockpit:
 
 ## Credits & License
 
-AlienCockpit is forked from the open-source [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) project by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
+**AlienCockpit** is crafted by **Irving Ngr** (🇻🇪 Venezuela) as a lightweight Windows 11 fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
 
 Licensed under the [MIT License](LICENSE).

@@ -239,15 +239,18 @@ namespace AlienFX_SDK {
 				devHandle = NULL;
 			}
 			else {
-				wchar_t descbuf[256];
-				description.clear();
-				if (HidD_GetManufacturerString(devHandle, descbuf, 255))
-					for (int i = 0; i < wcslen(descbuf); i++)
-						description += descbuf[i];
-				description += " ";
-				if (HidD_GetProductString(devHandle, descbuf, 255))
-					for (int i = 0; i < wcslen(descbuf); i++)
-						description += descbuf[i];
+				wchar_t descbuf[256]{};
+				std::string mfg, prod;
+				if (HidD_GetManufacturerString(devHandle, descbuf, 255) && descbuf[0] != L'\0')
+					for (size_t i = 0; i < wcslen(descbuf); i++)
+						mfg += static_cast<char>(descbuf[i]);
+				memset(descbuf, 0, sizeof(descbuf));
+				if (HidD_GetProductString(devHandle, descbuf, 255) && descbuf[0] != L'\0')
+					for (size_t i = 0; i < wcslen(descbuf); i++)
+						prod += static_cast<char>(descbuf[i]);
+				description = mfg;
+				if (!mfg.empty() && !prod.empty()) description += " ";
+				description += prod;
 				SetCommTimeouts(devHandle, &timeouts);
 			}
 			//DebugPrint("Probe done, type " + to_string(version) + "\n");

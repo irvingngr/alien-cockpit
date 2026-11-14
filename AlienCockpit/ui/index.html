@@ -142,7 +142,7 @@
                 </div>
               </div>
 
-              <!-- Mouse Interactive SVG Map -->
+              <!-- Mouse Interactive SVG Map (AWCC 3-Zone: Side Strips & Wheel, DPI Indicator, Mouse Logo) -->
               <div class="device-canvas" id="view-mouse">
                 <div class="mouse-stage">
                   <svg viewBox="0 0 320 440" class="mouse-svg" id="mouse-svg">
@@ -162,29 +162,24 @@
                     <line x1="160" y1="48" x2="160" y2="165" stroke="#1e2a42" stroke-width="2"/>
                     <path d="M84,165 Q160,178 236,165" fill="none" stroke="#1e2a42" stroke-width="2"/>
 
-                    <!-- Zone 1: Scroll Wheel -->
-                    <rect class="mouse-zone" data-zone-id="0" data-zone-name="Scroll Wheel"
-                          x="148" y="82" width="24" height="48" rx="10"
+                    <!-- Zone 0: Side Strips & Wheel (AWCC Zone 1) -->
+                    <g class="mouse-zone" data-zone-id="0" data-zone-name="Side Strips &amp; Wheel">
+                      <rect class="mouse-paint" x="148" y="82" width="24" height="48" rx="10" fill="#1e293b"/>
+                      <path class="mouse-stroke" d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
+                      <path class="mouse-stroke" d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
+                    </g>
+
+                    <!-- Zone 2: DPI Indicator (AWCC Zone 2) -->
+                    <rect class="mouse-zone mouse-paint" data-zone-id="2" data-zone-name="DPI Indicator"
+                          x="151" y="142" width="18" height="18" rx="4"
                           fill="#1e293b"/>
-                    <!-- Zone 2: DPI Indicator -->
-                    <rect class="mouse-zone" data-zone-id="1" data-zone-name="DPI Indicator"
-                          x="153" y="142" width="14" height="16" rx="4"
-                          fill="#1e293b"/>
-                    <!-- Zone 3: Left Side Strip -->
-                    <path class="mouse-zone" data-zone-id="2" data-zone-name="Left Side Strip"
-                          d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
-                    <!-- Zone 4: Right Side Strip -->
-                    <path class="mouse-zone" data-zone-id="3" data-zone-name="Right Side Strip"
-                          d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
-                    <!-- Zone 5: Palm Emblem -->
-                    <polygon class="mouse-zone" data-zone-id="4" data-zone-name="Palm Emblem"
+
+                    <!-- Zone 1: Mouse Logo (AWCC Zone 3) -->
+                    <polygon class="mouse-zone mouse-paint" data-zone-id="1" data-zone-name="Mouse Logo"
                              points="160,255 186,285 174,325 146,325 134,285"
                              fill="#1e293b"/>
-                    <!-- Zone 6: Underglow -->
-                    <path class="mouse-zone" data-zone-id="5" data-zone-name="Rear Underglow"
-                          d="M110,398 Q160,420 210,398" fill="none" stroke="#1e293b" stroke-width="6" stroke-linecap="round"/>
                   </svg>
-                  <div class="mouse-legend" id="mouse-zone-label">Click any mouse RGB zone to select</div>
+                  <div class="mouse-legend" id="mouse-zone-label">Click any AWCC mouse zone (Logo, DPI Indicator, or Side Strips)</div>
                 </div>
               </div>
 
@@ -218,6 +213,40 @@
                   <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone (including Power Button) to customize</div>
                 </div>
               </div>
+
+              <!-- Intuitive contextual prompt when selecting unmapped Touchpad / Power Button -->
+              <div class="unmapped-helper" id="unmapped-helper" style="display:none;">
+                <span id="unmapped-helper-text">This zone needs a hardware LED binding first.</span>
+                <button class="qs-btn" id="btn-start-visual-probe">Locate with Red LED Probe</button>
+              </div>
+
+              <!-- Interactive Hardware LED Probe Deck -->
+              <div class="led-probe-deck" id="led-probe-deck">
+                <div class="probe-left">
+                  <label class="probe-switch" title="Turn ON to emit a red test signal on each hardware LED ID">
+                    <input type="checkbox" id="probe-toggle" />
+                    <span class="probe-slider"></span>
+                    <span class="probe-state-text" id="probe-state-text">LED PROBE INACTIVE</span>
+                  </label>
+                  <span class="probe-dev-name" id="probe-dev-label">Device: —</span>
+                </div>
+
+                <div class="probe-stepper">
+                  <button class="probe-arrow" id="probe-prev" disabled title="Previous LED ID (Emits Red)">&#9664;</button>
+                  <div class="probe-readout">
+                    <span class="probe-code" id="probe-code-label">LED #0</span>
+                    <span class="probe-mapped" id="probe-mapped-label">Switch ON to test IDs in red</span>
+                  </div>
+                  <button class="probe-arrow" id="probe-next" disabled title="Next LED ID (Emits Red)">&#9654;</button>
+                </div>
+
+                <div class="probe-actions">
+                  <button class="qs-btn" id="probe-add" disabled title="Save current LED ID to device">+ Add LED</button>
+                  <button class="qs-btn btn-danger-soft" id="probe-remove" disabled title="Remove current LED ID from device">&#10005; Remove</button>
+                  <button class="qs-btn" id="probe-bind-tp" disabled title="Bind current red LED as RGB Touchpad">&rarr; Touchpad</button>
+                  <button class="qs-btn" id="probe-bind-pwr" disabled title="Bind current red LED as Power Button">&rarr; Power Btn</button>
+                </div>
+              </div>
             </div>
 
             <!-- Right Inspector Panel -->
@@ -231,7 +260,7 @@
               </div>
 
               <div class="inspector-section">
-                <div class="sec-title">PRIMARY COLOR</div>
+                <div class="sec-title">PRIMARY COLOR &amp; BRIGHTNESS</div>
                 <div class="color-row">
                   <input type="color" id="color-primary" value="#00f0ff" />
                   <input type="text" id="hex-primary" value="#00F0FF" maxlength="7" />
@@ -246,6 +275,13 @@
                   <button class="swatch" style="background:#3a86ff" data-color="#3a86ff" title="Ion Blue"></button>
                   <button class="swatch" style="background:#ffffff" data-color="#ffffff" title="Starlight"></button>
                 </div>
+                <div class="zone-bright-row">
+                  <span class="sec-sub">Key / Zone Bright</span>
+                  <div class="zone-bright-ctrl">
+                    <input type="range" id="zone-brightness" min="5" max="100" value="100" />
+                    <span class="ctrl-val" id="zone-brightness-val">100%</span>
+                  </div>
+                </div>
               </div>
 
               <div class="inspector-section">
@@ -257,7 +293,8 @@
                   <button class="eff-btn" data-eff="morph">Morph</button>
                   <button class="eff-btn" data-eff="spectrum">Spectrum</button>
                   <button class="eff-btn" data-eff="wave">Wave</button>
-                  <button class="eff-btn eff-aurora" data-eff="aurora">✦ Aurora (2025)</button>
+                  <button class="eff-btn eff-aurora" data-eff="aurora">✦ Aurora</button>
+                  <button class="eff-btn eff-summer" data-eff="summer">🌊 Summer</button>
                 </div>
 
                 <div class="secondary-color-row" id="secondary-color-wrap" style="display:none;">
@@ -337,7 +374,10 @@
           <div class="card curve-card">
             <div class="curve-header">
               <div>
-                <h3>Interactive Fan Curve</h3>
+                <div class="curve-title-row">
+                  <h3>Interactive Fan Curve</h3>
+                  <span class="curve-preset-badge" id="curve-active-badge">Balanced</span>
+                </div>
                 <span class="hint-text">Drag control points or pick a preset, then click Save Curve</span>
               </div>
               <div class="thermal-presets">
@@ -433,6 +473,16 @@
               </label>
               <label class="toggle-row">
                 <div>
+                  <strong>Startup Keyboard Intro Animation</strong>
+                  <span>Play a dynamic RGB sweep presentation across keyboard keys when the app starts</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="qs-btn" id="btn-test-intro" title="Play intro animation now">Preview</button>
+                  <input type="checkbox" id="set-startup-intro" />
+                </div>
+              </label>
+              <label class="toggle-row">
+                <div>
                   <strong>Enable Automatic Profile Switching</strong>
                   <span>Switch lighting &amp; fan profiles when launching linked games/apps</span>
                 </div>
@@ -476,8 +526,27 @@
           <div class="card about-card">
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div>
-              <h3>AlienCockpit v1.0.5 — AWCC Alternative</h3>
+              <h3>AlienCockpit v1.0.6 — AWCC Alternative</h3>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
+              <div class="credits-author">
+                <span>Crafted by <strong>Irving Ngr</strong></span>
+                <svg class="vz-flag" viewBox="0 0 36 24" aria-label="Venezuela Flag" role="img">
+                  <rect width="36" height="8" y="0" fill="#FFCC00"/>
+                  <rect width="36" height="8" y="8" fill="#00247D"/>
+                  <rect width="36" height="8" y="16" fill="#CF142B"/>
+                  <g fill="#FFFFFF">
+                    <circle cx="11.2" cy="13.4" r="0.75"/>
+                    <circle cx="12.7" cy="11.8" r="0.75"/>
+                    <circle cx="14.7" cy="10.7" r="0.75"/>
+                    <circle cx="16.9" cy="10.1" r="0.75"/>
+                    <circle cx="19.1" cy="10.1" r="0.75"/>
+                    <circle cx="21.3" cy="10.7" r="0.75"/>
+                    <circle cx="23.3" cy="11.8" r="0.75"/>
+                    <circle cx="24.8" cy="13.4" r="0.75"/>
+                  </g>
+                </svg>
+                <span class="hint-text">• Powered by AlienFX-SDK &amp; AlienFan-SDK (T-Troll)</span>
+              </div>
             </div>
           </div>
         </section>
