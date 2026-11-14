@@ -1,0 +1,47 @@
+name: Build AlienCockpit (Windows 11 x64)
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        run: nuget restore AlienCockpit\packages.config -PackagesDirectory packages
+
+      - name: Build AlienCockpit (Release x64)
+        run: >
+          msbuild AlienCockpit.sln
+          /t:AlienCockpit
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:PlatformToolset=v143
+          /m
+
+      - name: Package AlienCockpit artifact
+        run: |
+          mkdir dist
+          xcopy /E /I /Y x64\Release\AlienCockpit.exe dist\
+          xcopy /E /I /Y AlienCockpit\ui dist\ui\
+          xcopy /E /I /Y AlienCockpit\Mappings dist\Mappings\
+
+      - name: Upload AlienCockpit Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlienCockpit-win11-x64
+          path: dist/

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AlienCockpit — Space Command Center</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="starfield"></div>
+  <div class="cockpit-shell">
+    <!-- Top HUD Bar -->
+    <header class="hud-topbar">
+      <div class="brand">
+        <pre class="ansi-alien" aria-label="AlienCockpit Logo">
+  ▄▄▄▄▄
+▄█▀   ▀█▄
+█ ▀▄ ▄▀ █
+▀▄  ▄  ▄▀
+  ▀▀▀▀▀</pre>
+        <div class="brand-text">
+          <span class="brand-title">ALIEN<span class="accent">COCKPIT</span></span>
+          <span class="brand-sub">ORBITAL COMMAND &amp; TELEMETRY</span>
+        </div>
+      </div>
+
+      <div class="hud-telemetry">
+        <div class="hud-pill">
+          <span class="pill-label">PROFILE</span>
+          <span class="pill-val accent" id="hud-profile">Default</span>
+        </div>
+        <div class="hud-pill">
+          <span class="pill-label">CPU</span>
+          <span class="pill-val" id="hud-cpu">0%</span>
+        </div>
+        <div class="hud-pill">
+          <span class="pill-label">TEMP</span>
+          <span class="pill-val" id="hud-temp">--°C</span>
+        </div>
+        <div class="hud-pill">
+          <span class="pill-label">BATT</span>
+          <span class="pill-val" id="hud-batt">--%</span>
+        </div>
+      </div>
+
+      <div class="hud-controls">
+        <div class="brightness-wrap" title="Master Brightness">
+          <span class="ctrl-label">BRIGHT</span>
+          <input type="range" id="master-brightness" min="0" max="255" value="255" />
+          <span class="ctrl-val" id="master-brightness-val">100%</span>
+        </div>
+        <button class="btn-power active" id="btn-master-lights" title="Toggle All Lights">
+          <span class="dot"></span> LIGHTS ON
+        </button>
+      </div>
+    </header>
+
+    <div class="cockpit-body">
+      <!-- Left Navigation Rail -->
+      <nav class="nav-rail">
+        <button class="nav-item active" data-tab="lighting">
+          <span class="nav-icon">◈</span>
+          <span class="nav-text">Lighting Studio</span>
+        </button>
+        <button class="nav-item" data-tab="thermals">
+          <span class="nav-icon">❖</span>
+          <span class="nav-text">Thermals &amp; Fans</span>
+        </button>
+        <button class="nav-item" data-tab="battery">
+          <span class="nav-icon">⚡</span>
+          <span class="nav-text">Power &amp; Battery</span>
+        </button>
+        <button class="nav-item" data-tab="profiles">
+          <span class="nav-icon">⬢</span>
+          <span class="nav-text">Profiles</span>
+        </button>
+        <button class="nav-item" data-tab="settings">
+          <span class="nav-icon">⚙</span>
+          <span class="nav-text">System &amp; Boot</span>
+        </button>
+
+        <div class="nav-footer">
+          <div class="status-badge" id="backend-status">
+            <span class="status-dot"></span>
+            <span id="backend-status-text">HUD READY</span>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Main Viewport -->
+      <main class="viewport">
+        <!-- TAB 1: LIGHTING STUDIO -->
+        <section class="tab-panel active" id="tab-lighting">
+          <div class="panel-header">
+            <div>
+              <h2>RGB Lighting Studio</h2>
+              <p class="subtitle">Click or drag-select keys &amp; zones to paint colors and effects in real time.</p>
+            </div>
+            <div class="device-switcher">
+              <button class="seg-btn active" data-view="keyboard">Keyboard</button>
+              <button class="seg-btn" data-view="mouse">Gaming Mouse</button>
+              <button class="seg-btn" data-view="chassis">Chassis &amp; Zones</button>
+            </div>
+          </div>
+
+          <div class="lighting-workspace">
+            <!-- Visual Interactive Canvas -->
+            <div class="visual-stage">
+              <!-- Quick Selection Toolbar -->
+              <div class="quick-select-bar" id="kbd-quick-bar">
+                <span class="qs-label">QUICK SELECT:</span>
+                <button class="qs-btn" data-select="all">All Keys</button>
+                <button class="qs-btn" data-select="wasd">WASD</button>
+                <button class="qs-btn" data-select="arrows">Arrows</button>
+                <button class="qs-btn" data-select="fn">F-Keys</button>
+                <button class="qs-btn" data-select="mods">Modifiers</button>
+                <button class="qs-btn" data-select="clear">Clear Selection</button>
+              </div>
+
+              <!-- Keyboard Interactive Map -->
+              <div class="device-canvas active" id="view-keyboard">
+                <div class="kbd-frame" id="kbd-grid"></div>
+              </div>
+
+              <!-- Mouse Interactive SVG Map -->
+              <div class="device-canvas" id="view-mouse">
+                <div class="mouse-stage">
+                  <svg viewBox="0 0 320 440" class="mouse-svg" id="mouse-svg">
+                    <defs>
+                      <filter id="glow">
+                        <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                        <feMerge>
+                          <feMergeNode in="coloredBlur"/>
+                          <feMergeNode in="SourceGraphic"/>
+                        </feMerge>
+                      </filter>
+                    </defs>
+                    <!-- Mouse Body -->
+                    <path d="M90,90 C90,35 230,35 230,90 L245,280 C248,365 210,405 160,405 C110,405 72,365 75,280 Z"
+                          fill="#0d1322" stroke="#24324d" stroke-width="3"/>
+                    <!-- Left & Right Click Split -->
+                    <line x1="160" y1="48" x2="160" y2="165" stroke="#1e2a42" stroke-width="2"/>
+                    <path d="M84,165 Q160,178 236,165" fill="none" stroke="#1e2a42" stroke-width="2"/>
+
+                    <!-- Zone 1: Scroll Wheel -->
+                    <rect class="mouse-zone" data-zone-id="0" data-zone-name="Scroll Wheel"
+                          x="148" y="82" width="24" height="48" rx="10"
+                          fill="#00f0ff" filter="url(#glow)"/>
+                    <!-- Zone 2: DPI Indicator -->
+                    <rect class="mouse-zone" data-zone-id="1" data-zone-name="DPI Indicator"
+                          x="153" y="142" width="14" height="16" rx="4"
+                          fill="#7b2cbf" filter="url(#glow)"/>
+                    <!-- Zone 3: Left Side Strip -->
+                    <path class="mouse-zone" data-zone-id="2" data-zone-name="Left Side Strip"
+                          d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#00f0ff" stroke-width="7" stroke-linecap="round" filter="url(#glow)"/>
+                    <!-- Zone 4: Right Side Strip -->
+                    <path class="mouse-zone" data-zone-id="3" data-zone-name="Right Side Strip"
+                          d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#00f0ff" stroke-width="7" stroke-linecap="round" filter="url(#glow)"/>
+                    <!-- Zone 5: Palm Emblem -->
+                    <polygon class="mouse-zone" data-zone-id="4" data-zone-name="Palm Emblem"
+                             points="160,255 186,285 174,325 146,325 134,285"
+                             fill="#00f0ff" filter="url(#glow)"/>
+                    <!-- Zone 6: Underglow -->
+                    <path class="mouse-zone" data-zone-id="5" data-zone-name="Rear Underglow"
+                          d="M110,398 Q160,420 210,398" fill="none" stroke="#7b2cbf" stroke-width="6" stroke-linecap="round" filter="url(#glow)"/>
+                  </svg>
+                  <div class="mouse-legend" id="mouse-zone-label">Click any mouse RGB zone to select</div>
+                </div>
+              </div>
+
+              <!-- Chassis Interactive SVG Map -->
+              <div class="device-canvas" id="view-chassis">
+                <div class="chassis-stage">
+                  <svg viewBox="0 0 500 320" class="chassis-svg" id="chassis-svg">
+                    <!-- Laptop / System Silhouette -->
+                    <rect x="70" y="30" width="360" height="200" rx="14" fill="#0b101d" stroke="#24324d" stroke-width="3"/>
+                    <!-- Lid Emblem -->
+                    <polygon class="chassis-zone" data-zone-id="10" data-zone-name="Lid Emblem"
+                             points="250,95 276,125 264,165 236,165 224,125"
+                             fill="#00f0ff"/>
+                    <!-- Rear Exhaust Ring -->
+                    <rect class="chassis-zone" data-zone-id="11" data-zone-name="Rear Exhaust Ring"
+                          x="110" y="218" width="280" height="10" rx="5" fill="#7b2cbf"/>
+                    <!-- Base / Front Lightbar -->
+                    <polygon points="40,245 460,245 485,285 15,285" fill="#10182b" stroke="#24324d" stroke-width="2"/>
+                    <rect class="chassis-zone" data-zone-id="12" data-zone-name="Front Lightbar"
+                          x="80" y="274" width="340" height="8" rx="4" fill="#00f0ff"/>
+                    <!-- Left Vent -->
+                    <rect class="chassis-zone" data-zone-id="13" data-zone-name="Left Side Vent"
+                          x="28" y="256" width="36" height="10" rx="4" fill="#00f0ff"/>
+                    <!-- Right Vent -->
+                    <rect class="chassis-zone" data-zone-id="14" data-zone-name="Right Side Vent"
+                          x="436" y="256" width="36" height="10" rx="4" fill="#00f0ff"/>
+                  </svg>
+                  <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone to customize</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Inspector Panel -->
+            <aside class="inspector-panel">
+              <div class="inspector-section">
+                <div class="sec-title">
+                  <span>SELECTED TARGET</span>
+                  <span class="badge-count" id="selected-count">0 selected</span>
+                </div>
+                <div class="selected-preview" id="selected-names">Click keys or zones on the left</div>
+              </div>
+
+              <div class="inspector-section">
+                <div class="sec-title">PRIMARY COLOR</div>
+                <div class="color-row">
+                  <input type="color" id="color-primary" value="#00f0ff" />
+                  <input type="text" id="hex-primary" value="#00F0FF" maxlength="7" />
+                </div>
+                <div class="swatches" id="color-swatches">
+                  <button class="swatch" style="background:#00f0ff" data-color="#00f0ff" title="Orbital Cyan"></button>
+                  <button class="swatch" style="background:#7b2cbf" data-color="#7b2cbf" title="Plasma Violet"></button>
+                  <button class="swatch" style="background:#ff007f" data-color="#ff007f" title="Hyper Magenta"></button>
+                  <button class="swatch" style="background:#00ff9d" data-color="#00ff9d" title="Xenon Mint"></button>
+                  <button class="swatch" style="background:#ffb703" data-color="#ffb703" title="Solar Amber"></button>
+                  <button class="swatch" style="background:#ff2a4b" data-color="#ff2a4b" title="Red Alert"></button>
+                  <button class="swatch" style="background:#3a86ff" data-color="#3a86ff" title="Ion Blue"></button>
+                  <button class="swatch" style="background:#ffffff" data-color="#ffffff" title="Starlight"></button>
+                </div>
+              </div>
+
+              <div class="inspector-section">
+                <div class="sec-title">LIGHTING EFFECT</div>
+                <div class="effect-grid" id="effect-grid">
+                  <button class="eff-btn active" data-eff="static">Static</button>
+                  <button class="eff-btn" data-eff="breathing">Breathing</button>
+                  <button class="eff-btn" data-eff="pulse">Pulse</button>
+                  <button class="eff-btn" data-eff="morph">Morph</button>
+                  <button class="eff-btn" data-eff="spectrum">Spectrum</button>
+                  <button class="eff-btn" data-eff="wave">Wave</button>
+                </div>
+
+                <div class="secondary-color-row" id="secondary-color-wrap" style="display:none;">
+                  <span class="sec-sub">Secondary Color</span>
+                  <input type="color" id="color-secondary" value="#7b2cbf" />
+                </div>
+
+                <div class="speed-row">
+                  <span class="sec-sub">Tempo / Speed</span>
+                  <input type="range" id="effect-speed" min="1" max="100" value="50" />
+                </div>
+              </div>
+
+              <button class="btn-primary full-width" id="btn-apply-lighting">
+                APPLY TO SELECTED
+              </button>
+
+              <div class="inspector-section hardware-mapper">
+                <div class="sec-title">
+                  <span>HARDWARE LED MAPPER</span>
+                </div>
+                <p class="hint-text">Detected AlienFX devices &amp; LEDs. Click Blink to locate a physical LED.</p>
+                <div class="hw-device-select">
+                  <select id="hw-device-dropdown"></select>
+                </div>
+                <div class="hw-light-list" id="hw-light-list"></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- TAB 2: THERMALS & FANS -->
+        <section class="tab-panel" id="tab-thermals">
+          <div class="panel-header">
+            <div>
+              <h2>Thermals &amp; Fan Telemetry</h2>
+              <p class="subtitle">ACPI BIOS fan curves, temperature sensors, and performance power modes.</p>
+            </div>
+            <div class="power-mode-bar" id="power-mode-bar">
+              <button class="seg-btn active" data-pm="0">Quiet</button>
+              <button class="seg-btn" data-pm="1">Balanced</button>
+              <button class="seg-btn" data-pm="2">Performance</button>
+              <button class="seg-btn" data-pm="3">Full Speed</button>
+            </div>
+          </div>
+
+          <div class="thermals-grid">
+            <div class="card">
+              <h3>Temperature Sensors</h3>
+              <div class="sensor-list" id="sensor-list"></div>
+            </div>
+            <div class="card">
+              <h3>Cooling Fans</h3>
+              <div class="fan-list" id="fan-list"></div>
+            </div>
+          </div>
+
+          <div class="card curve-card">
+            <div class="curve-header">
+              <h3>Interactive Fan Curve</h3>
+              <span class="hint-text">Drag control points to adjust Fan Boost % vs Temperature (°C)</span>
+              <button class="btn-secondary" id="btn-save-curve">Save Curve</button>
+            </div>
+            <svg id="fan-curve-svg" viewBox="0 0 640 240" class="fan-curve-svg"></svg>
+          </div>
+        </section>
+
+        <!-- TAB 3: POWER & BATTERY -->
+        <section class="tab-panel" id="tab-battery">
+          <div class="panel-header">
+            <div>
+              <h2>Power &amp; Connected Devices Battery</h2>
+              <p class="subtitle">Real-time battery telemetry for system and wireless peripherals (Bluetooth / HID).</p>
+            </div>
+            <button class="btn-secondary" id="btn-refresh-batt">Scan Devices</button>
+          </div>
+
+          <div class="battery-grid" id="battery-grid"></div>
+        </section>
+
+        <!-- TAB 4: PROFILES -->
+        <section class="tab-panel" id="tab-profiles">
+          <div class="panel-header">
+            <div>
+              <h2>Command Profiles</h2>
+              <p class="subtitle">Create lighting &amp; thermal profiles with automatic app/game switching.</p>
+            </div>
+            <div class="profile-create-row">
+              <input type="text" id="new-profile-name" placeholder="New profile name..." />
+              <button class="btn-primary" id="btn-create-profile">+ Create Profile</button>
+            </div>
+          </div>
+
+          <div class="profiles-grid" id="profiles-grid"></div>
+        </section>
+
+        <!-- TAB 5: SETTINGS & BOOT -->
+        <section class="tab-panel" id="tab-settings">
+          <div class="panel-header">
+            <div>
+              <h2>System &amp; Windows 11 Integration</h2>
+              <p class="subtitle">Configure Windows startup behavior, tray options, and power-saving lighting rules.</p>
+            </div>
+          </div>
+
+          <div class="settings-grid">
+            <div class="card settings-card">
+              <h3>Windows 11 Startup &amp; Tray</h3>
+              <label class="toggle-row">
+                <div>
+                  <strong>Launch AlienCockpit on Windows Startup</strong>
+                  <span>Automatically starts in background when you sign in to Windows 11</span>
+                </div>
+                <input type="checkbox" id="set-start-windows" />
+              </label>
+              <label class="toggle-row">
+                <div>
+                  <strong>Start Minimized to System Tray</strong>
+                  <span>Keep the cockpit tucked in the notification area until opened</span>
+                </div>
+                <input type="checkbox" id="set-start-minimized" />
+              </label>
+              <label class="toggle-row">
+                <div>
+                  <strong>Enable Automatic Profile Switching</strong>
+                  <span>Switch lighting &amp; fan profiles when launching linked games/apps</span>
+                </div>
+                <input type="checkbox" id="set-prof-switch" />
+              </label>
+            </div>
+
+            <div class="card settings-card">
+              <h3>Lighting &amp; Power Rules</h3>
+              <label class="toggle-row">
+                <div>
+                  <strong>Gamma Color Correction</strong>
+                  <span>Calibrate LED output for accurate color reproduction</span>
+                </div>
+                <input type="checkbox" id="set-gamma" />
+              </label>
+              <label class="toggle-row">
+                <div>
+                  <strong>Enable Fan &amp; Thermal Control</strong>
+                  <span>Manage ACPI BIOS fans and power modes from AlienCockpit</span>
+                </div>
+                <input type="checkbox" id="set-fan-control" />
+              </label>
+              <label class="toggle-row">
+                <div>
+                  <strong>Turn Off Lights on Battery</strong>
+                  <span>Maximize battery life when unplugged from AC power</span>
+                </div>
+                <input type="checkbox" id="set-off-battery" />
+              </label>
+              <label class="toggle-row">
+                <div>
+                  <strong>Dim Lights on Battery</strong>
+                  <span>Reduce LED brightness automatically when running on battery</span>
+                </div>
+                <input type="checkbox" id="set-dim-battery" />
+              </label>
+            </div>
+          </div>
+
+          <div class="card about-card">
+            <pre class="ansi-alien-lg">
+      ▄▄▄▄▄▄▄▄▄▄
+    ▄█▀        ▀█▄
+   █▀   ▄▄  ▄▄   ▀█
+   █   ███  ███   █
+   █              █
+    ▀▄   ▄▄▄▄   ▄▀
+      ▀▄▄    ▄▄▀
+         ▀▀▀▀</pre>
+            <div>
+              <h3>AlienCockpit v1.0</h3>
+              <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with an intuitive orbital cockpit interface for Windows 11.</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
