@@ -30,6 +30,7 @@ jobs:
           /t:AlienCockpit
           /p:Configuration=Release
           /p:Platform=x64
+          /p:VCToolsVersion=
           /m
 
       - name: Package AlienCockpit artifact
