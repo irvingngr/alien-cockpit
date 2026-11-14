@@ -4,26 +4,40 @@
 
 # AlienCockpit — AWCC Alternative
 
-**AlienCockpit** is a fast, lightweight, and stable command center for **Windows 11** built as a modern fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools). It pairs the rock-solid hardware stability of the open-source `AlienFX-SDK` and `AlienFan-SDK` C++ engines with an intuitive, space-gaming cockpit interface powered by Microsoft Edge WebView2.
+**AlienCockpit** is an ultra-lightweight, low-resource command center for **Windows 11** built as a modern fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools). Unlike heavy vendor suites such as Alienware Command Center (AWCC), AlienCockpit consumes **minimal RAM and near-0% idle CPU** with **no bloated background telemetry or updater services**. It pairs the rock-solid hardware stability of the open-source `AlienFX-SDK` and `AlienFan-SDK` C++ engines with a crisp PerMonitorV2 WebView2 interface.
+
+---
+
+## Quick Installation (No Building Required)
+
+You do **not** need Visual Studio or any compiler to use AlienCockpit:
+
+1. Open the [**GitHub Releases**](https://github.com/irvingngr/alien-cockpit/releases/latest) page.
+2. Download the latest precompiled `AlienCockpit-v*.zip` package.
+3. Extract the folder anywhere on your PC and run **`AlienCockpit.exe`**.
+
+*(Tip: Enable **Always Run as Administrator** in `Settings → System & Boot` if you want automatic elevated access for ACPI BIOS fan curves.)*
 
 ---
 
 ## Key Features
 
+- **Ultra-Low Resource Usage**: Native C++20 core with minimal memory footprint and no background bloatware compared to AWCC.
 - **Intuitive Visual RGB Studio**
-  - Interactive **Keyboard** (click or drag-select keys, quick-select groups like `WASD`, `Arrows`, `F-Keys`, `Modifiers`), **Gaming Mouse**, and **Chassis** visual maps.
-  - Real-time color & effect assignment: `Static`, `Breathing`, `Pulse`, `Morph`, `Spectrum`, and `Wave`.
-  - **1-Click Hardware LED Mapper**: Blink any physical LED on your device to identify and bind it effortlessly.
+  - Interactive **Full-Size Keyboard** (including Numpad & `⏻ Power Button`), **RGB Touchpad**, **Gaming Mouse**, and **Chassis** visual maps that reflect live hardware state.
+  - Smooth 30fps crossfade transitions & speed-calibrated effects: `Static`, `Breathing`, `Pulse`, `Morph`, `Spectrum`, `Wave`, and **`Aurora 2025`** multi-color palettes.
+  - Non-destructive **Game & Theme Presets** (`Cyberpunk 2077`, `Aurora Borealis`, `Crimson Halo`, etc.) with 1-click **`Reset to Lighting Studio`**.
+  - **1-Click Hardware LED Mapper**: Blink any physical LED to locate it and bind custom zones (`Bind → Touchpad`, `Bind → Power Btn`).
 - **Thermals, Fans & Power Modes (`AlienFan-SDK`)**
   - Live CPU/GPU/ambient temperature sensors and fan RPM telemetry.
   - Interactive drag-and-drop **Fan Curve Editor** and quick power profile switching (`Quiet`, `Balanced`, `Performance`, `Full Speed`).
 - **Connected Device Battery Telemetry**
-  - Displays real-time battery percentage and charging status for your laptop battery as well as connected wireless peripherals (Bluetooth / 2.4GHz HID mice, keyboards, and headsets) via Windows 11 PnP battery reporting.
+  - Displays real-time laptop battery percentage and charging status, plus wireless HID / Bluetooth / Windows Battery Class peripherals.
 - **Profiles & Automation**
   - Create, activate, and manage custom lighting/thermal profiles with automatic switching by running applications or power source (AC / Battery).
 - **Windows 11 Native Integration**
-  - **Start with Windows 11** (`--minimized` support) and **System Tray** quick-switch menu.
-  - Immersive dark titlebar (`DWMWA_USE_IMMERSIVE_DARK_MODE`) and PerMonitorV2 High-DPI support.
+  - **Start with Windows 11** (`--minimized` support), **Always Run as Administrator** (elevated logon task option), and dynamic **System Tray** icon + battery/lights hover tooltip.
+  - Immersive dark titlebar (`DWMWA_USE_IMMERSIVE_DARK_MODE`) and **PerMonitorV2** High-DPI sharpness.
 
 ---
 
@@ -35,7 +49,9 @@
 
 ---
 
-## Building from Source
+## Building from Source (Optional)
+
+> Precompiled binaries are already provided in [**Releases**](https://github.com/irvingngr/alien-cockpit/releases). Only follow these steps if you want to modify or compile the source code yourself.
 
 ### Prerequisites
 - Visual Studio 2022 or 2026 (Desktop development with C++ workload)
@@ -54,7 +70,7 @@
    ```cmd
    msbuild AlienCockpit.sln /t:AlienCockpit /p:Configuration=Release /p:Platform=x64
    ```
-4. Automated builds are also configured via GitHub Actions (`.github/workflows/build.yml`).
+4. Automated builds & releases are configured via GitHub Actions (`.github/workflows/build.yml`).
 
 ---
 

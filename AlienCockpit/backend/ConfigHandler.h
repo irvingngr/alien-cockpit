@@ -173,6 +173,7 @@ private:
 public:
 	DWORD startWindows;
 	DWORD startMinimized;
+	DWORD alwaysAdmin;
 	DWORD updateCheck;
 	DWORD lightsOn;
 	DWORD dimmed;

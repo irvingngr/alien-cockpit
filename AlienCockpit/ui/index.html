@@ -165,24 +165,24 @@
                     <!-- Zone 1: Scroll Wheel -->
                     <rect class="mouse-zone" data-zone-id="0" data-zone-name="Scroll Wheel"
                           x="148" y="82" width="24" height="48" rx="10"
-                          fill="#00f0ff" filter="url(#glow)"/>
+                          fill="#1e293b"/>
                     <!-- Zone 2: DPI Indicator -->
                     <rect class="mouse-zone" data-zone-id="1" data-zone-name="DPI Indicator"
                           x="153" y="142" width="14" height="16" rx="4"
-                          fill="#7b2cbf" filter="url(#glow)"/>
+                          fill="#1e293b"/>
                     <!-- Zone 3: Left Side Strip -->
                     <path class="mouse-zone" data-zone-id="2" data-zone-name="Left Side Strip"
-                          d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#00f0ff" stroke-width="7" stroke-linecap="round" filter="url(#glow)"/>
+                          d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
                     <!-- Zone 4: Right Side Strip -->
                     <path class="mouse-zone" data-zone-id="3" data-zone-name="Right Side Strip"
-                          d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#00f0ff" stroke-width="7" stroke-linecap="round" filter="url(#glow)"/>
+                          d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
                     <!-- Zone 5: Palm Emblem -->
                     <polygon class="mouse-zone" data-zone-id="4" data-zone-name="Palm Emblem"
                              points="160,255 186,285 174,325 146,325 134,285"
-                             fill="#00f0ff" filter="url(#glow)"/>
+                             fill="#1e293b"/>
                     <!-- Zone 6: Underglow -->
                     <path class="mouse-zone" data-zone-id="5" data-zone-name="Rear Underglow"
-                          d="M110,398 Q160,420 210,398" fill="none" stroke="#7b2cbf" stroke-width="6" stroke-linecap="round" filter="url(#glow)"/>
+                          d="M110,398 Q160,420 210,398" fill="none" stroke="#1e293b" stroke-width="6" stroke-linecap="round"/>
                   </svg>
                   <div class="mouse-legend" id="mouse-zone-label">Click any mouse RGB zone to select</div>
                 </div>
@@ -197,22 +197,25 @@
                     <!-- Lid Emblem -->
                     <polygon class="chassis-zone" data-zone-id="10" data-zone-name="Lid Emblem"
                              points="250,95 276,125 264,165 236,165 224,125"
-                             fill="#00f0ff"/>
+                             fill="#1e293b"/>
                     <!-- Rear Exhaust Ring -->
                     <rect class="chassis-zone" data-zone-id="11" data-zone-name="Rear Exhaust Ring"
-                          x="110" y="218" width="280" height="10" rx="5" fill="#7b2cbf"/>
+                          x="110" y="218" width="280" height="10" rx="5" fill="#1e293b"/>
                     <!-- Base / Front Lightbar -->
                     <polygon points="40,245 460,245 485,285 15,285" fill="#10182b" stroke="#24324d" stroke-width="2"/>
+                    <!-- Power Button (Deck) -->
+                    <circle class="chassis-zone" data-zone-id="power" data-zone-name="Power Button"
+                            cx="250" cy="258" r="8" fill="#1e293b" stroke="#334155" stroke-width="2"/>
                     <rect class="chassis-zone" data-zone-id="12" data-zone-name="Front Lightbar"
-                          x="80" y="274" width="340" height="8" rx="4" fill="#00f0ff"/>
+                          x="80" y="274" width="340" height="8" rx="4" fill="#1e293b"/>
                     <!-- Left Vent -->
                     <rect class="chassis-zone" data-zone-id="13" data-zone-name="Left Side Vent"
-                          x="28" y="256" width="36" height="10" rx="4" fill="#00f0ff"/>
+                          x="28" y="256" width="36" height="10" rx="4" fill="#1e293b"/>
                     <!-- Right Vent -->
                     <rect class="chassis-zone" data-zone-id="14" data-zone-name="Right Side Vent"
-                          x="436" y="256" width="36" height="10" rx="4" fill="#00f0ff"/>
+                          x="436" y="256" width="36" height="10" rx="4" fill="#1e293b"/>
                   </svg>
-                  <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone to customize</div>
+                  <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone (including Power Button) to customize</div>
                 </div>
               </div>
             </div>
@@ -287,13 +290,17 @@
                 <div class="sec-title">
                   <span>HARDWARE LED MAPPER</span>
                 </div>
-                <p class="hint-text">Detected AlienFX devices &amp; LEDs. Click Blink to locate a physical LED.</p>
+                <p class="hint-text" id="hw-mapper-hint">Select a LED and click Blink to locate it, or Bind it to Touchpad / Power Button.</p>
                 <div class="hw-device-select">
                   <select id="hw-device-dropdown"></select>
                 </div>
                 <div class="hw-add-row">
                   <input type="number" id="hw-add-led-id" min="0" max="255" placeholder="Probe LED ID (0-255)" />
                   <button class="qs-btn" id="btn-add-hw-led">+ Add LED</button>
+                </div>
+                <div class="hw-bind-row">
+                  <button class="qs-btn" id="btn-bind-touchpad" title="Bind selected physical LED as RGB Touchpad">Bind &rarr; Touchpad</button>
+                  <button class="qs-btn" id="btn-bind-power" title="Bind selected physical LED as Power Button">Bind &rarr; Power Btn</button>
                 </div>
                 <div class="hw-light-list" id="hw-light-list"></div>
               </div>
@@ -372,7 +379,13 @@
           </div>
 
           <div class="card">
-            <h3>Game &amp; Theme Presets (1-Click Apply)</h3>
+            <div class="preset-header-row">
+              <h3>Game &amp; Theme Presets (1-Click Preview)</h3>
+              <button class="btn-reset-preset" id="btn-reset-preset" style="display:none;">&#8634; Reset to Lighting Studio</button>
+            </div>
+            <div class="preset-banner" id="active-preset-banner" style="display:none;">
+              <span>Active Theme Preset: <strong id="active-preset-name">—</strong> (non-destructive preview — saved profiles preserved)</span>
+            </div>
             <div class="preset-cards" id="game-presets">
               <button class="preset-chip" data-preset="cyberpunk" style="--p1:#fcee0a;--p2:#00f0ff">Cyberpunk 2077</button>
               <button class="preset-chip" data-preset="aurora" style="--p1:#00f0ff;--p2:#00ff9d">Aurora Borealis</button>
@@ -410,6 +423,13 @@
                   <span>Keep the cockpit tucked in the notification area until opened</span>
                 </div>
                 <input type="checkbox" id="set-start-minimized" />
+              </label>
+              <label class="toggle-row">
+                <div>
+                  <strong>Always Run as Administrator</strong>
+                  <span>Auto-elevate on launch for full ACPI BIOS thermal &amp; fan control (prompts UAC or uses elevated logon task)</span>
+                </div>
+                <input type="checkbox" id="set-always-admin" />
               </label>
               <label class="toggle-row">
                 <div>
@@ -456,8 +476,8 @@
           <div class="card about-card">
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div>
-              <h3>AlienCockpit v1.0 — AWCC Alternative</h3>
-              <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with an intuitive cockpit interface for Windows 11.</p>
+              <h3>AlienCockpit v1.0.5 — AWCC Alternative</h3>
+              <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
             </div>
           </div>
         </section>

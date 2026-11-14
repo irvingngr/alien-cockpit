@@ -23,10 +23,12 @@
   user-select: none;
 }
 
-body {
+html, body {
   background: var(--bg-deep);
   color: var(--text-main);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   height: 100vh;
   overflow: hidden;
 }
@@ -954,13 +956,20 @@ body {
   grid-column: span 2;
 }
 
+.keycap.key-power {
+  background: radial-gradient(circle at 50% 45%, rgba(0, 240, 255, 0.08), #10182b 75%);
+  border-color: rgba(255, 255, 255, 0.24);
+  font-size: 8.5px;
+  letter-spacing: 0.3px;
+}
+
 .touchpad-zone {
   width: 240px;
   height: 92px;
   border-radius: 10px;
   background: rgba(16, 23, 41, 0.85);
-  border: 2px solid #00f0ff;
-  box-shadow: 0 0 18px rgba(0, 240, 255, 0.25), inset 0 0 18px rgba(0, 240, 255, 0.12);
+  border: 2px solid #2b3952;
+  box-shadow: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1025,7 +1034,7 @@ body {
   outline-offset: 1px;
 }
 
-/* Hardware Add LED row */
+/* Hardware Add & Bind LED rows */
 .hw-add-row {
   display: flex;
   gap: 6px;
@@ -1042,12 +1051,63 @@ body {
   font-size: 11px;
 }
 
+.hw-bind-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.hw-bind-row .qs-btn {
+  text-align: center;
+  font-size: 10.5px;
+  padding: 5px 6px;
+}
+
 /* Thermal & Game Presets */
 .thermal-presets {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.preset-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.preset-header-row h3 {
+  margin-bottom: 0;
+}
+
+.preset-banner {
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid var(--border-glow);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.btn-reset-preset {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 183, 3, 0.55);
+  background: rgba(255, 183, 3, 0.12);
+  color: var(--amber);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-reset-preset:hover {
+  background: rgba(255, 183, 3, 0.22);
+  box-shadow: 0 0 10px rgba(255, 183, 3, 0.25);
 }
 
 .preset-cards {
@@ -1072,4 +1132,10 @@ body {
   transform: translateY(-1px);
   border-color: var(--p1);
   box-shadow: 0 0 12px color-mix(in srgb, var(--p1) 35%, transparent);
+}
+
+.preset-chip.active {
+  border-color: var(--p1);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--p1) 45%, transparent);
+  outline: 1px solid var(--p1);
 }

@@ -54,7 +54,8 @@ public:
 		stateDim = false,
 		stateAction = true,
 		finalPBState = true, 
-		updateAllowed = true;
+		updateAllowed = true,
+		deferV5Refresh = false;
 	int finalBrightness = -1;
 
 	FXHelper();

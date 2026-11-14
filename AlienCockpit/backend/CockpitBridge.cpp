@@ -7,16 +7,54 @@
 #include "StartupManager.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
+#include <shlobj.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <unordered_map>
 
 extern ConfigHandler* conf;
 extern FXHelper* fxhl;
 extern EventHandler* eve;
 extern MonHelper* mon;
 extern ConfigFan* fan_conf;
+
+static unsigned g_prePresetProfileId = 0;
+static std::string g_activePresetName;
+
+struct CrossfadeState {
+    bool active = false;
+    ULONGLONG startMs = 0;
+    DWORD durationMs = 700;
+    std::unordered_map<DWORD, AlienFX_SDK::Afx_action> prevColors;
+};
+static std::unordered_map<DWORD, AlienFX_SDK::Afx_action> g_lastSentRgb;
+static CrossfadeState g_crossfade;
+
+static void SeedLastSentRgbIfEmpty() {
+    if (!g_lastSentRgb.empty() || !conf || !conf->activeProfile) return;
+    conf->modifyProfile.lockRead();
+    for (const auto& ls : conf->activeProfile->lightsets) {
+        if (ls.color.empty()) continue;
+        AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(ls.group);
+        if (!grp) continue;
+        for (const auto& gl : grp->lights) {
+            AlienFX_SDK::Afx_action act = ls.color[0];
+            act.type = AlienFX_SDK::AlienFX_A_Color;
+            g_lastSentRgb[gl.lgh] = act;
+        }
+    }
+    conf->modifyProfile.unlockRead();
+}
+
+static void BeginCrossfade(DWORD durationMs = 700) {
+    SeedLastSentRgbIfEmpty();
+    g_crossfade.prevColors = g_lastSentRgb;
+    g_crossfade.startMs = GetTickCount64();
+    g_crossfade.durationMs = durationMs;
+    g_crossfade.active = true;
+}
 
 static std::string ColorToHex(byte r, byte g, byte b) {
     char buf[16];
@@ -134,6 +172,7 @@ std::string CockpitBridge::BuildTelemetryJson() {
     SimpleJson::Value fanData = SimpleJson::Value::Object();
     bool acpiReady = (mon != nullptr && mon->acpi != nullptr && mon->acpi->isSupported);
     fanData["available"] = (acpiReady && (mon->fansize > 0 || mon->sensorSize > 0 || mon->powerSize > 0));
+    fanData["isAdmin"] = (IsUserAnAdmin() != FALSE);
     if (mon) {
         if (acpiReady && mon->senValues.empty()) {
             mon->GetSensorData(true);
@@ -193,6 +232,8 @@ std::string CockpitBridge::BuildFullStateJson() {
     settings["dimmedBatt"] = (conf->dimmedBatt != 0);
     settings["startWindows"] = StartupManager::IsStartupEnabled();
     settings["startMinimized"] = (conf->startMinimized != 0);
+    settings["alwaysAdmin"] = (conf->alwaysAdmin != 0);
+    settings["isAdmin"] = (IsUserAnAdmin() != FALSE);
     root["settings"] = settings;
 
     // Devices & Lights
@@ -227,12 +268,14 @@ std::string CockpitBridge::BuildFullStateJson() {
 
     // Profiles
     root["activeProfileId"] = conf->activeProfile ? static_cast<int>(conf->activeProfile->id) : 0;
+    root["activePreset"] = (conf->activeProfile && conf->activeProfile->id == 9999) ? g_activePresetName : std::string("");
     SimpleJson::Value profs = SimpleJson::Value::Array();
     for (const auto& p : conf->profiles) {
         SimpleJson::Value po = SimpleJson::Value::Object();
         po["id"] = static_cast<int>(p->id);
         po["name"] = p->name;
         po["isDefault"] = ((p->flags & PROF_DEFAULT) != 0);
+        po["isPreset"] = (p->id == 9999);
         po["active"] = (conf->activeProfile && conf->activeProfile->id == p->id);
         po["triggerFlags"] = static_cast<int>(p->triggerFlags);
 
@@ -374,6 +417,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         }
 
         if (conf->activeProfile && pid && !lightIds.empty()) {
+            BeginCrossfade(700);
             conf->modifyProfile.lockWrite();
 
             auto isGroupShared = [&](DWORD gid) {
@@ -452,6 +496,8 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
             // Build deduplicated light list for new/updated group
             std::vector<AlienFX_SDK::Afx_groupLight> targetLights;
+            AlienFX_SDK::Afx_device* targetDev = conf->afx_dev.GetDeviceById(pid);
+            bool allPowerLights = (targetDev != nullptr);
             for (const auto& lidVal : lightIds) {
                 WORD lid = static_cast<WORD>(lidVal.asInt(0));
                 bool dup = false;
@@ -463,7 +509,14 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                     gl.did = pid;
                     gl.lid = lid;
                     targetLights.push_back(gl);
+                    if (targetDev && !(conf->afx_dev.GetFlags(targetDev, lid) & ALIENFX_FLAG_POWER)) {
+                        allPowerLights = false;
+                    }
                 }
+            }
+            if (allPowerLights && !targetLights.empty()) {
+                // Keep hardware Power Button steady static to prevent bank reprogramming flicker
+                eff = "static";
             }
 
             // Find or create group for this zone
@@ -553,7 +606,10 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
             conf->modifyProfile.unlockWrite();
 
+            fxhl->deferV5Refresh = true;
             fxhl->ClearAndRefresh(true);
+            fxhl->deferV5Refresh = false;
+            CockpitBridge::StepAnimatedEffects();
             conf->Save();
             conf->afx_dev.SaveMappings();
         }
@@ -597,14 +653,26 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         byte lid = static_cast<byte>(msg.get("lightId").asInt(0));
         std::string name = msg.get("name").asString();
         WORD scancode = static_cast<WORD>(msg.get("scancode").asInt(0));
+        int flagsVal = msg.get("flags").asInt(-1);
         AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
         if (dev) {
+            bool found = false;
             for (auto& l : dev->lights) {
                 if (l.lightid == lid) {
                     if (!name.empty()) l.name = name;
                     if (scancode) l.scancode = scancode;
+                    if (flagsVal >= 0) l.flags = static_cast<WORD>(flagsVal);
+                    found = true;
                     break;
                 }
+            }
+            if (!found) {
+                AlienFX_SDK::Afx_light nl{};
+                nl.lightid = lid;
+                nl.name = name.empty() ? ("LED Zone " + std::to_string(lid)) : name;
+                nl.scancode = scancode;
+                nl.flags = (flagsVal >= 0) ? static_cast<WORD>(flagsVal) : 0;
+                dev->lights.push_back(nl);
             }
             conf->afx_dev.SaveMappings();
             conf->Save();
@@ -612,11 +680,150 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         return BuildFullStateJson();
     }
 
-    if (cmd == "activateProfile" && conf && eve) {
+    if (cmd == "activateProfile" && conf && eve && fxhl) {
         unsigned id = static_cast<unsigned>(msg.get("id").asInt(0));
         profile* p = conf->FindProfile(id);
         if (p) {
+            BeginCrossfade(700);
+            if (id != 9999) {
+                g_activePresetName.clear();
+            }
+            fxhl->deferV5Refresh = true;
             eve->SwitchActiveProfile(p, true);
+            if (id != 9999) {
+                for (auto it = conf->profiles.begin(); it != conf->profiles.end(); ) {
+                    if ((*it)->id == 9999) {
+                        delete *it;
+                        it = conf->profiles.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+            fxhl->ClearAndRefresh(true);
+            fxhl->deferV5Refresh = false;
+            CockpitBridge::StepAnimatedEffects();
+            conf->Save();
+        }
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "applyGamePreset" && conf && eve && fxhl) {
+        std::string presetName = msg.get("name").asString("Preset");
+        std::string hex1 = msg.get("color").asString("#00f0ff");
+        std::string hex2 = msg.get("color2").asString("#7b2cbf");
+        std::string hex3 = msg.get("color3").asString("#7b2cbf");
+        std::string eff = msg.get("effect").asString("static");
+        byte speed = static_cast<byte>(std::clamp(msg.get("speed").asInt(50), 1, 100));
+
+        byte r1 = 0, g1 = 240, b1 = 255;
+        byte r2 = 123, g2 = 44, b2 = 191;
+        byte r3 = 123, g3 = 44, b3 = 191;
+        HexToRgb(hex1, r1, g1, b1);
+        HexToRgb(hex2, r2, g2, b2);
+        HexToRgb(hex3, r3, g3, b3);
+
+        if (conf->activeProfile && conf->activeProfile->id != 9999) {
+            g_prePresetProfileId = conf->activeProfile->id;
+        }
+        BeginCrossfade(700);
+        g_activePresetName = presetName;
+
+        conf->modifyProfile.lockWrite();
+        profile* presetProf = conf->FindProfile(9999);
+        if (!presetProf) {
+            presetProf = new profile();
+            presetProf->id = 9999;
+            conf->profiles.push_back(presetProf);
+        }
+        presetProf->name = "Preset: " + presetName;
+        presetProf->flags = 0;
+        presetProf->lightsets.clear();
+
+        auto* groupsVec = conf->afx_dev.GetGroups();
+        for (const auto& dev : conf->afx_dev.fxdevs) {
+            if (!dev.present || dev.lights.empty()) continue;
+            std::vector<AlienFX_SDK::Afx_groupLight> targetLights;
+            for (const auto& l : dev.lights) {
+                if (l.flags & ALIENFX_FLAG_POWER) continue;
+                AlienFX_SDK::Afx_groupLight gl{};
+                gl.did = dev.pid;
+                gl.lid = l.lightid;
+                targetLights.push_back(gl);
+            }
+            if (targetLights.empty()) continue;
+
+            DWORD gid = 0x20000 + dev.pid;
+            AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(gid);
+            if (!grp && groupsVec) {
+                AlienFX_SDK::Afx_group ng;
+                ng.gid = gid;
+                ng.name = presetProf->name;
+                ng.lights = targetLights;
+                groupsVec->push_back(ng);
+            } else if (grp) {
+                grp->name = presetProf->name;
+                grp->lights = targetLights;
+            }
+
+            groupset gs;
+            gs.group = static_cast<int>(gid);
+            AlienFX_SDK::Afx_action act1{};
+            act1.type = EffectNameToType(eff);
+            act1.r = r1; act1.g = g1; act1.b = b1;
+            act1.tempo = speed;
+            act1.time = 5;
+            gs.color.push_back(act1);
+
+            if (eff == "morph" || eff == "breathing" || eff == "pulse" || eff == "aurora") {
+                AlienFX_SDK::Afx_action act2{};
+                act2.type = act1.type;
+                act2.r = r2; act2.g = g2; act2.b = b2;
+                act2.tempo = speed;
+                act2.time = 5;
+                gs.color.push_back(act2);
+            }
+            if (eff == "aurora") {
+                AlienFX_SDK::Afx_action act3{};
+                act3.type = act1.type;
+                act3.r = r3; act3.g = g3; act3.b = b3;
+                act3.tempo = speed;
+                act3.time = 5;
+                gs.color.push_back(act3);
+            }
+            presetProf->lightsets.push_back(gs);
+        }
+        conf->modifyProfile.unlockWrite();
+
+        fxhl->deferV5Refresh = true;
+        eve->SwitchActiveProfile(presetProf, true);
+        fxhl->ClearAndRefresh(true);
+        fxhl->deferV5Refresh = false;
+        CockpitBridge::StepAnimatedEffects();
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "restorePreset" && conf && eve && fxhl) {
+        profile* target = conf->FindProfile(g_prePresetProfileId);
+        if (!target || target->id == 9999) {
+            target = conf->FindDefaultProfile();
+        }
+        if (target) {
+            BeginCrossfade(700);
+            g_activePresetName.clear();
+            fxhl->deferV5Refresh = true;
+            eve->SwitchActiveProfile(target, true);
+            for (auto it = conf->profiles.begin(); it != conf->profiles.end(); ) {
+                if ((*it)->id == 9999) {
+                    delete *it;
+                    it = conf->profiles.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            fxhl->ClearAndRefresh(true);
+            fxhl->deferV5Refresh = false;
+            CockpitBridge::StepAnimatedEffects();
             conf->Save();
         }
         return BuildFullStateJson();
@@ -626,7 +833,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         std::string name = msg.get("name").asString("New Profile");
         unsigned maxId = 1;
         for (const auto& p : conf->profiles) {
-            if (p->id >= maxId) maxId = p->id + 1;
+            if (p->id != 9999 && p->id >= maxId) maxId = p->id + 1;
         }
         profile* np = new profile();
         np->id = maxId;
@@ -680,16 +887,22 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     }
 
     if (cmd == "setSettings" && conf) {
+        if (msg.has("alwaysAdmin")) {
+            conf->alwaysAdmin = msg.get("alwaysAdmin").asBool(false) ? 1 : 0;
+            if (StartupManager::IsStartupEnabled()) {
+                StartupManager::SetStartupEnabled(true, conf->startMinimized != 0, conf->alwaysAdmin != 0);
+            }
+        }
         if (msg.has("startWindows")) {
             bool en = msg.get("startWindows").asBool(false);
             bool min = msg.has("startMinimized") ? msg.get("startMinimized").asBool(true) : (conf->startMinimized != 0);
             conf->startWindows = en ? 1 : 0;
-            StartupManager::SetStartupEnabled(en, min);
+            StartupManager::SetStartupEnabled(en, min, conf->alwaysAdmin != 0);
         }
         if (msg.has("startMinimized")) {
             conf->startMinimized = msg.get("startMinimized").asBool(false) ? 1 : 0;
             if (StartupManager::IsStartupEnabled())
-                StartupManager::SetStartupEnabled(true, conf->startMinimized != 0);
+                StartupManager::SetStartupEnabled(true, conf->startMinimized != 0, conf->alwaysAdmin != 0);
         }
         if (msg.has("gammaCorrection")) conf->gammaCorrection = msg.get("gammaCorrection").asBool(true) ? 1 : 0;
         if (msg.has("enableProfSwitch")) conf->enableProfSwitch = msg.get("enableProfSwitch").asBool(true) ? 1 : 0;
@@ -736,17 +949,43 @@ static AlienFX_SDK::Afx_action LerpColor(const AlienFX_SDK::Afx_action& a, const
     return out;
 }
 
+static void GetDarfonKeyXY(byte lid, double& nx, double& ny) {
+    if (lid <= 19) { nx = lid / 19.0; ny = 0.0; }
+    else if (lid <= 39) { nx = (lid - 20) / 19.0; ny = 0.2; }
+    else if (lid <= 59) { nx = (lid - 40) / 19.0; ny = 0.4; }
+    else if (lid <= 79) { nx = (lid - 60) / 19.0; ny = 0.6; }
+    else if (lid <= 99) { nx = (lid - 80) / 19.0; ny = 0.8; }
+    else if (lid == 114) { nx = 14.5 / 19.0; ny = 0.8; }
+    else if (lid <= 119) { nx = (lid - 100) / 19.0; ny = 1.0; }
+    else if (lid >= 133 && lid <= 135) { nx = (13.5 + (lid - 133)) / 19.0; ny = 1.0; }
+    else { nx = (lid % 8) / 7.0; ny = 0.5; }
+}
+
 void CockpitBridge::StepAnimatedEffects() {
     if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return;
 
-    double nowSec = static_cast<double>(GetTickCount64()) / 1000.0;
-    bool anyAnimated = false;
+    ULONGLONG nowMs = GetTickCount64();
+    double nowSec = static_cast<double>(nowMs) / 1000.0;
+    bool isFading = g_crossfade.active;
+    double fadeT = 1.0;
+    if (isFading) {
+        ULONGLONG elapsed = (nowMs >= g_crossfade.startMs) ? (nowMs - g_crossfade.startMs) : 0;
+        double rawT = (g_crossfade.durationMs > 0)
+            ? std::clamp(static_cast<double>(elapsed) / static_cast<double>(g_crossfade.durationMs), 0.0, 1.0)
+            : 1.0;
+        double inv = 1.0 - rawT;
+        fadeT = 1.0 - (inv * inv * inv);
+    }
+
+    bool anyUpdated = false;
+    bool finalSettleFrame = (isFading && fadeT >= 1.0);
+    std::unordered_map<WORD, bool> devBusy;
 
     conf->modifyProfile.lockRead();
     for (const auto& ls : conf->activeProfile->lightsets) {
         if (ls.color.empty()) continue;
         byte effType = ls.color[0].type;
-        if (effType == AlienFX_SDK::AlienFX_A_Color) continue;
+        if (effType == AlienFX_SDK::AlienFX_A_Color && !isFading) continue;
 
         AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(ls.group);
         if (!grp || grp->lights.empty()) continue;
@@ -754,69 +993,93 @@ void CockpitBridge::StepAnimatedEffects() {
         const auto& c1 = ls.color[0];
         AlienFX_SDK::Afx_action c2 = (ls.color.size() > 1) ? ls.color[1] : AlienFX_SDK::Afx_action{ 0 };
         AlienFX_SDK::Afx_action c3 = (ls.color.size() > 2) ? ls.color[2] : c1;
-        double speedNorm = 0.4 + (static_cast<double>(c1.tempo) / 100.0) * 2.4;
-        double phase = nowSec * speedNorm;
+
+        double tNorm = std::clamp(static_cast<double>(c1.tempo), 1.0, 100.0) / 100.0;
+        double cyclesPerSec = 0.035 + std::pow(tNorm, 1.75) * 0.65;
+        double angle = nowSec * cyclesPerSec * 6.283185307179586;
         bool isAurora = (effType == AlienFX_SDK::AlienFX_A_Rainbow && ls.color.size() >= 3);
 
         for (const auto& gl : grp->lights) {
             AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(gl.did);
             if (!dev || !dev->present || !dev->dev) continue;
-            // API_V5 & API_ACPI lack autonomous per-light effect engines; drive them smoothly in software.
-            // Also drive Aurora on all devices since it's a custom 3-color multi-wave effect.
+            // Drive only API_V5 / API_ACPI in software; API_V4/V6 use native hardware engines
             if (dev->dev->version != AlienFX_SDK::API_V5 &&
-                dev->dev->version != AlienFX_SDK::API_ACPI &&
-                !isAurora) {
+                dev->dev->version != AlienFX_SDK::API_ACPI) {
                 continue;
             }
-            fxhl->modifyQuery.lockRead();
-            auto qIt = fxhl->devLightQuery.find(dev->pid);
-            size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
-            fxhl->modifyQuery.unlockRead();
-            if (qSize > 12) {
+            // Never drive hardware Power Button indicator in software loop
+            if (conf->afx_dev.GetFlags(dev, gl.lid) & ALIENFX_FLAG_POWER) {
                 continue;
             }
+
+            auto busyIt = devBusy.find(dev->pid);
+            if (busyIt == devBusy.end()) {
+                fxhl->modifyQuery.lockRead();
+                auto qIt = fxhl->devLightQuery.find(dev->pid);
+                size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                fxhl->modifyQuery.unlockRead();
+                bool skipDev = (!finalSettleFrame && qSize >= 1) || (qSize > 300);
+                busyIt = devBusy.emplace(dev->pid, skipDev).first;
+            }
+            if (busyIt->second) {
+                continue;
+            }
+
+            double nx = 0.0, ny = 0.0;
+            GetDarfonKeyXY(static_cast<byte>(gl.lid), nx, ny);
 
             AlienFX_SDK::Afx_action frame{};
             frame.type = AlienFX_SDK::AlienFX_A_Color;
-            double colPos = static_cast<double>(gl.lid % 20) * 0.25 + static_cast<double>(gl.lid / 20) * 0.35;
 
             if (isAurora) {
-                // Organic multi-wave Aurora Borealis shimmer across keys
-                double w1 = 0.5 + 0.5 * std::sin(phase * 1.4 + colPos * 0.75);
-                double w2 = 0.5 + 0.5 * std::sin(phase * 0.85 - colPos * 0.5 + 1.7);
+                double posCoord = nx * 2.2 + ny * 0.8;
+                double w1 = 0.5 + 0.5 * std::sin(angle + posCoord);
+                double w2 = 0.5 + 0.5 * std::sin(angle * 0.67 - nx * 1.7 + ny * 1.1 + 1.9);
                 AlienFX_SDK::Afx_action mix12 = LerpColor(c1, c2, w1);
                 frame = LerpColor(mix12, c3, w2 * 0.65);
             } else if (effType == AlienFX_SDK::AlienFX_A_Breathing) {
-                double k = 0.05 + 0.95 * (0.5 - 0.5 * std::cos(phase * 2.2));
+                double k = 0.05 + 0.95 * (0.5 - 0.5 * std::cos(angle));
                 AlienFX_SDK::Afx_action dark{ 0 };
                 frame = LerpColor(dark, c1, k);
             } else if (effType == AlienFX_SDK::AlienFX_A_Pulse) {
-                double frac = std::fmod(phase * 0.8, 1.0);
-                double k = std::exp(-frac * 4.5);
-                frame = LerpColor(c2, c1, k);
+                double pw = 0.5 - 0.5 * std::cos(angle);
+                double k = 0.04 + 0.96 * (pw * pw * pw);
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, c1, k);
             } else if (effType == AlienFX_SDK::AlienFX_A_Morph) {
-                double k = 0.5 - 0.5 * std::cos(phase * 1.6);
+                double k = 0.5 - 0.5 * std::cos(angle);
                 frame = LerpColor(c1, c2, k);
             } else if (effType == AlienFX_SDK::AlienFX_A_Spectrum) {
-                double hue = std::fmod(phase * 45.0, 360.0);
+                double hue = std::fmod(nowSec * cyclesPerSec * 120.0, 360.0);
                 HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
             } else if (effType == AlienFX_SDK::AlienFX_A_Rainbow) {
-                double hue = std::fmod(phase * 55.0 + colPos * 28.0, 360.0);
+                double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0 + ny * 35.0, 360.0);
                 HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
             } else {
                 frame = c1;
                 frame.type = AlienFX_SDK::AlienFX_A_Color;
             }
 
+            if (isFading && fadeT < 1.0) {
+                auto pIt = g_crossfade.prevColors.find(gl.lgh);
+                AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
+                frame = LerpColor(prev, frame, fadeT);
+            }
+
+            g_lastSentRgb[gl.lgh] = frame;
             std::vector<AlienFX_SDK::Afx_action> acts{ frame };
             fxhl->SetLight(gl.lgh, &acts);
-            anyAnimated = true;
+            anyUpdated = true;
         }
     }
     conf->modifyProfile.unlockRead();
 
-    if (anyAnimated) {
+    if (anyUpdated) {
         fxhl->QueryUpdate();
+    }
+    if (isFading && fadeT >= 1.0) {
+        g_crossfade.active = false;
+        g_crossfade.prevColors.clear();
     }
 }
 

@@ -167,6 +167,7 @@ void ConfigHandler::Load() {
 
 	GetReg("AutoStart", &startWindows);
 	GetReg("Minimized", &startMinimized);
+	GetReg("AlwaysAdmin", &alwaysAdmin);
 	GetReg("UpdateCheck", &updateCheck, 1);
 	GetReg("LightsOn", &lightsOn, 1);
 	GetReg("Dimmed", &dimmed);
@@ -362,6 +363,7 @@ void ConfigHandler::Save() {
 
 	SetReg("AutoStart", startWindows);
 	SetReg("Minimized", startMinimized);
+	SetReg("AlwaysAdmin", alwaysAdmin);
 	SetReg("UpdateCheck", updateCheck);
 	SetReg("LightsOn", lightsOn);
 	SetReg("Dimmed", dimmed);
@@ -377,7 +379,8 @@ void ConfigHandler::Save() {
 	SetReg("OffOnBattery", offOnBattery);
 	SetReg("DimmingPower", dimmingPower);
 	SetReg("FullPower", fullPower);
-	SetReg("ActiveProfile", activeProfile->id);
+	DWORD saveProfId = (activeProfile && activeProfile->id != 9999) ? activeProfile->id : 0;
+	SetReg("ActiveProfile", saveProfId);
 	SetReg("GammaCorrection", gammaCorrection);
 	SetReg("ProfileAutoSwitch", enableProfSwitch);
 	//SetReg("EsifTemp", esif_temp);
@@ -406,6 +409,7 @@ void ConfigHandler::Save() {
 	RegCreateKeyEx(hKeyMain, "Zones", 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hKeyZones, NULL);
 
 	for (profile* prof : profiles) {
+		if (!prof || prof->id == 9999) continue;
 		string profID = to_string(prof->id);
 		string name = "Profile-" + profID;
 		RegSetValueEx(hKeyProfiles, name.c_str(), 0, REG_SZ, (BYTE*)prof->name.c_str(), (DWORD)prof->name.size());

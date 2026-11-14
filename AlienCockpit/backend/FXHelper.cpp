@@ -239,12 +239,32 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 {
 	auto dev = conf->afx_dev.GetDeviceById(LOWORD(lgh));
 	if (dev && dev->present && actions->size()) {
+		bool isPowerLight = (conf->afx_dev.GetFlags(dev, HIWORD(lgh)) & ALIENFX_FLAG_POWER) != 0;
+		if (deferV5Refresh && !isPowerLight && dev->dev &&
+			(dev->dev->version == AlienFX_SDK::API_V5 || dev->dev->version == AlienFX_SDK::API_ACPI)) {
+			return;
+		}
 		LightQueryElement newBlock{ (byte)HIWORD(lgh), 
-			(byte)(conf->afx_dev.GetFlags(dev, HIWORD(lgh)) & ALIENFX_FLAG_POWER ? 4 : 0), (byte)actions->size() };
+			(byte)(isPowerLight ? 4 : 0), (byte)actions->size() };
 		memcpy(newBlock.actions, actions->data(), newBlock.actsize * sizeof(AlienFX_SDK::Afx_action));
 		for (int i = 0; i < newBlock.actsize; i++) {
 			AlienFX_SDK::Afx_action* action = &newBlock.actions[i];
 			ChangeAccent(action);
+			if (!isPowerLight && dev->dev &&
+				dev->dev->version != AlienFX_SDK::API_V5 && dev->dev->version != AlienFX_SDK::API_ACPI &&
+				action->type != AlienFX_SDK::AlienFX_A_Color) {
+				// Convert Aurora 3-color Rainbow placeholder into smooth multi-phase hardware Morph on V4 chassis controllers
+				if (dev->dev->version == AlienFX_SDK::API_V4 && newBlock.actsize >= 3 &&
+					action->type == AlienFX_SDK::AlienFX_A_Rainbow) {
+					action->type = AlienFX_SDK::AlienFX_A_Morph;
+				}
+				// UI speed is 1 (slowest) .. 100 (fastest); legacy V2/V3/V4/V6 hardware tempo is inverse delay (higher = slower)
+				if (dev->dev->version <= AlienFX_SDK::API_V4 || dev->dev->version == AlienFX_SDK::API_V6) {
+					int uiSpeed = max(1, min(100, (int)action->tempo));
+					action->tempo = (byte)max(12, min(220, 222 - uiSpeed * 2));
+					action->time = (byte)max(10, min(70, 68 - uiSpeed / 2));
+				}
+			}
 			// gamma-correction...
 			if (conf->gammaCorrection) {
 				action->r = ((UINT)action->r * action->r * dev->white.r) / 65025; // (255 * 255);

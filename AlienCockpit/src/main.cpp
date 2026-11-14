@@ -54,10 +54,39 @@ static ComPtr<ICoreWebView2Controller> g_webviewController;
 static ComPtr<ICoreWebView2> g_webview;
 static NOTIFYICONDATAW g_nid{};
 static bool g_trayAdded = false;
+static HANDLE g_hMutex = nullptr;
 static const UINT_PTR TIMER_TELEMETRY = 1;
 static const UINT_PTR TIMER_EFFECTS = 2;
 static std::vector<BatteryDeviceInfo> g_cachedBatteries;
 static ULONGLONG g_lastBatteryScanTick = 0;
+
+static bool RelaunchAsAdmin(HWND hwnd, bool minimized) {
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring params = L"--relaunch";
+    if (minimized) params += L" --minimized";
+
+    if (g_hMutex) {
+        CloseHandle(g_hMutex);
+        g_hMutex = nullptr;
+    }
+
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.lpVerb = L"runas";
+    sei.lpFile = exePath;
+    sei.lpParameters = params.c_str();
+    sei.nShow = minimized ? SW_SHOWMINNOACTIVE : SW_SHOWNORMAL;
+
+    if (ShellExecuteExW(&sei)) {
+        if (hwnd) DestroyWindow(hwnd);
+        return true;
+    }
+
+    // UAC canceled or failed; re-acquire single-instance mutex
+    g_hMutex = CreateMutexW(nullptr, TRUE, L"Local\\AlienCockpitSingleInstance");
+    return false;
+}
 
 static std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -229,75 +258,90 @@ static void EnsureDefaultDeviceMappings() {
         if (!dev.present) continue;
 
         bool isDarfonKeyboard = (dev.vid == 0x0D62) || (dev.dev && dev.dev->version == AlienFX_SDK::API_V5);
-        bool isPlaceholder16 = (dev.lights.size() == 16 && dev.lights[0].name == "LED Zone 0");
+        bool hasPlaceholder = std::any_of(dev.lights.begin(), dev.lights.end(),
+            [](const AlienFX_SDK::Afx_light& l) {
+                return l.name.rfind("LED Zone ", 0) == 0 || l.name.rfind("Light ", 0) == 0;
+            });
         bool allZeroScancode = !dev.lights.empty() && std::all_of(dev.lights.begin(), dev.lights.end(),
             [](const AlienFX_SDK::Afx_light& l) { return l.scancode == 0; });
         bool needsUpgrade = dev.lights.empty() ||
-            (isDarfonKeyboard && (isPlaceholder16 || dev.lights.size() <= 20 || allZeroScancode));
+            (isDarfonKeyboard && (hasPlaceholder || dev.lights.size() <= 20 || allZeroScancode));
 
-        if (!needsUpgrade) continue;
+        if (needsUpgrade) {
+            dev.lights.clear();
 
-        dev.lights.clear();
+            // 1. Try matching vid/pid in Mappings/devices.csv (first matching block)
+            std::ifstream file(csvPathUtf8);
+            if (file.is_open()) {
+                std::string line;
+                bool inMatchingDevice = false;
+                bool foundDevice = false;
+                while (std::getline(file, line)) {
+                    if (line.empty()) continue;
+                    std::vector<std::string> cols = ParseCsvLine(line);
+                    if (cols.empty()) continue;
 
-        // 1. Try matching vid/pid in Mappings/devices.csv (first matching block)
-        std::ifstream file(csvPathUtf8);
-        if (file.is_open()) {
-            std::string line;
-            bool inMatchingDevice = false;
-            bool foundDevice = false;
-            while (std::getline(file, line)) {
-                if (line.empty()) continue;
-                std::vector<std::string> cols = ParseCsvLine(line);
-                if (cols.empty()) continue;
+                    if (cols[0] == "0" && cols.size() >= 4) {
+                        if (foundDevice) break;
+                        int fvid = std::atoi(cols[1].c_str());
+                        int fpid = std::atoi(cols[2].c_str());
+                        inMatchingDevice = (fvid == dev.vid && fpid == dev.pid);
+                        if (inMatchingDevice) foundDevice = true;
+                    } else if (cols[0] == "3") {
+                        if (inMatchingDevice) break;
+                        inMatchingDevice = false;
+                    } else if (inMatchingDevice && cols[0] == "1" && cols.size() >= 4) {
+                        byte lid = static_cast<byte>(std::atoi(cols[1].c_str()));
+                        bool dup = std::any_of(dev.lights.begin(), dev.lights.end(),
+                            [lid](const AlienFX_SDK::Afx_light& x) { return x.lightid == lid; });
+                        if (dup) continue;
 
-                if (cols[0] == "0" && cols.size() >= 4) {
-                    if (foundDevice) break;
-                    int fvid = std::atoi(cols[1].c_str());
-                    int fpid = std::atoi(cols[2].c_str());
-                    inMatchingDevice = (fvid == dev.vid && fpid == dev.pid);
-                    if (inMatchingDevice) foundDevice = true;
-                } else if (cols[0] == "3") {
-                    if (inMatchingDevice) break;
-                    inMatchingDevice = false;
-                } else if (inMatchingDevice && cols[0] == "1" && cols.size() >= 4) {
-                    byte lid = static_cast<byte>(std::atoi(cols[1].c_str()));
-                    bool dup = std::any_of(dev.lights.begin(), dev.lights.end(),
-                        [lid](const AlienFX_SDK::Afx_light& x) { return x.lightid == lid; });
-                    if (dup) continue;
-
-                    AlienFX_SDK::Afx_light l{};
-                    l.lightid = lid;
-                    l.data = static_cast<DWORD>(std::strtoul(cols[2].c_str(), nullptr, 10));
-                    l.name = cols[3];
-                    if (isDarfonKeyboard && l.scancode == 0) {
-                        for (const auto& dk : darfonTemplate) {
-                            if (dk.lightid == l.lightid) {
-                                l.scancode = dk.scancode;
-                                if (l.name.empty()) l.name = dk.name;
-                                break;
+                        AlienFX_SDK::Afx_light l{};
+                        l.lightid = lid;
+                        l.data = static_cast<DWORD>(std::strtoul(cols[2].c_str(), nullptr, 10));
+                        l.name = cols[3];
+                        if (isDarfonKeyboard) {
+                            for (const auto& dk : darfonTemplate) {
+                                if (dk.lightid == l.lightid) {
+                                    if (l.scancode == 0) l.scancode = dk.scancode;
+                                    if (l.name.empty() || l.name.rfind("Light ", 0) == 0) l.name = dk.name;
+                                    break;
+                                }
                             }
                         }
+                        dev.lights.push_back(l);
+                        anyAdded = true;
                     }
-                    dev.lights.push_back(l);
+                }
+            }
+
+            // 2. Fallback: full per-key layout for Darfon/API_V5 keyboards, or 0..15 zones for other devices
+            if (dev.lights.empty()) {
+                if (isDarfonKeyboard) {
+                    dev.lights = darfonTemplate;
+                    anyAdded = true;
+                } else {
+                    for (byte i = 0; i < 16; ++i) {
+                        AlienFX_SDK::Afx_light l{};
+                        l.lightid = i;
+                        l.flags = 0;
+                        l.name = "LED Zone " + std::to_string(i);
+                        dev.lights.push_back(l);
+                    }
                     anyAdded = true;
                 }
             }
         }
 
-        // 2. Fallback: full per-key layout for Darfon/API_V5 keyboards, or 0..15 zones for other devices
-        if (dev.lights.empty()) {
-            if (isDarfonKeyboard) {
-                dev.lights = darfonTemplate;
-                anyAdded = true;
-            } else {
-                for (byte i = 0; i < 16; ++i) {
-                    AlienFX_SDK::Afx_light l{};
-                    l.lightid = i;
-                    l.flags = 0;
-                    l.name = "LED Zone " + std::to_string(i);
-                    dev.lights.push_back(l);
+        // 3. Ensure full-size Darfon keyboards have Numpad & any missing template keys
+        if (isDarfonKeyboard) {
+            for (const auto& dk : darfonTemplate) {
+                bool exists = std::any_of(dev.lights.begin(), dev.lights.end(),
+                    [&](const AlienFX_SDK::Afx_light& x) { return x.lightid == dk.lightid; });
+                if (!exists) {
+                    dev.lights.push_back(dk);
+                    anyAdded = true;
                 }
-                anyAdded = true;
             }
         }
     }
@@ -439,21 +483,14 @@ static void InitWebView(HWND hwnd) {
                                                 return S_OK;
                                             }
                                             if (jsonStr.find("\"restartAsAdmin\"") != std::string::npos) {
-                                                wchar_t exePath[MAX_PATH]{};
-                                                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-                                                SHELLEXECUTEINFOW sei{};
-                                                sei.cbSize = sizeof(sei);
-                                                sei.lpVerb = L"runas";
-                                                sei.lpFile = exePath;
-                                                sei.nShow = SW_SHOWNORMAL;
-                                                if (ShellExecuteExW(&sei)) {
-                                                    DestroyWindow(hwnd);
-                                                }
+                                                RelaunchAsAdmin(hwnd, false);
                                                 return S_OK;
                                             }
                                             std::string resp = CockpitBridge::HandleMessage(jsonStr);
                                             if (jsonStr.find("\"toggleLights\"") != std::string::npos ||
                                                 jsonStr.find("\"activateProfile\"") != std::string::npos ||
+                                                jsonStr.find("\"applyGamePreset\"") != std::string::npos ||
+                                                jsonStr.find("\"restorePreset\"") != std::string::npos ||
                                                 jsonStr.find("\"setBrightness\"") != std::string::npos) {
                                                 UpdateTrayIconAndTooltip(false);
                                             }
@@ -539,6 +576,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         return 0;
 
+    case WM_DPICHANGED: {
+        const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+        if (suggested) {
+            SetWindowPos(hwnd, nullptr,
+                suggested->left, suggested->top,
+                suggested->right - suggested->left,
+                suggested->bottom - suggested->top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        if (g_webviewController) {
+            RECT bounds{};
+            GetClientRect(hwnd, &bounds);
+            g_webviewController->put_Bounds(bounds);
+        }
+        return 0;
+    }
+
     case WM_CLOSE:
         // Minimize to tray instead of quitting
         ShowWindow(hwnd, SW_HIDE);
@@ -614,14 +668,35 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdShow) {
     hInst = hInstance;
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Local\\AlienCockpitSingleInstance");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+    bool isRelaunch = (lpCmdLine && wcsstr(lpCmdLine, L"--relaunch") != nullptr);
+    bool noElevate = (lpCmdLine && wcsstr(lpCmdLine, L"--no-elevate") != nullptr);
+    bool startMin = (lpCmdLine && wcsstr(lpCmdLine, L"--minimized") != nullptr);
+
+    g_hMutex = CreateMutexW(nullptr, TRUE, L"Local\\AlienCockpitSingleInstance");
+    DWORD mutexErr = GetLastError();
+    if (mutexErr == ERROR_ALREADY_EXISTS && isRelaunch) {
+        for (int retry = 0; retry < 30; ++retry) {
+            if (g_hMutex) {
+                CloseHandle(g_hMutex);
+                g_hMutex = nullptr;
+            }
+            Sleep(100);
+            g_hMutex = CreateMutexW(nullptr, TRUE, L"Local\\AlienCockpitSingleInstance");
+            mutexErr = GetLastError();
+            if (mutexErr != ERROR_ALREADY_EXISTS) break;
+        }
+    }
+    if (mutexErr == ERROR_ALREADY_EXISTS) {
         HWND existing = FindWindowW(L"AlienCockpitWindowClass", nullptr);
         if (existing) {
             ShowMainWindow(existing);
         }
-        if (hMutex) CloseHandle(hMutex);
+        if (g_hMutex) {
+            CloseHandle(g_hMutex);
+            g_hMutex = nullptr;
+        }
         return 0;
     }
 
@@ -630,6 +705,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     // Initialize AlienFX & AlienFan backend
     conf = new ConfigHandler();
     conf->Load();
+
+    if (conf->alwaysAdmin && !IsUserAnAdmin() && !noElevate) {
+        if (RelaunchAsAdmin(nullptr, startMin)) {
+            delete conf;
+            conf = nullptr;
+            CoUninitialize();
+            return 0;
+        }
+    }
+
     mon = new MonHelper();
     fxhl = new FXHelper();
     eve = new EventHandler();
@@ -686,9 +771,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     InitTrayIcon(hwnd);
     InitWebView(hwnd);
     SetTimer(hwnd, TIMER_TELEMETRY, 1500, nullptr);
-    SetTimer(hwnd, TIMER_EFFECTS, 85, nullptr);
+    SetTimer(hwnd, TIMER_EFFECTS, 33, nullptr);
 
-    bool startMin = (lpCmdLine && wcsstr(lpCmdLine, L"--minimized") != nullptr);
     if (!startMin) {
         ShowWindow(hwnd, nCmdShow ? nCmdShow : SW_SHOWNORMAL);
         UpdateWindow(hwnd);
@@ -723,6 +807,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     }
 
     CoUninitialize();
-    if (hMutex) CloseHandle(hMutex);
+    if (g_hMutex) {
+        CloseHandle(g_hMutex);
+        g_hMutex = nullptr;
+    }
     return static_cast<int>(msg.wParam);
 }
