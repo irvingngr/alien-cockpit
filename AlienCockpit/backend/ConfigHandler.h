@@ -114,6 +114,8 @@ struct groupset {
 	bool fromColor = false;
 	WORD gaugeflags = 0;
 	byte gauge = 0;
+	byte brightness = 100;
+	AlienFX_SDK::Afx_colorcode baseColor{ 0 };
 };
 
 struct deviceeffect {
@@ -199,6 +201,9 @@ public:
 	DWORD fansOnBattery;
 	DWORD actionLights;
 	DWORD actionTimeout;
+	DWORD summerMode;
+
+	string favoriteColors;
 
 	COLORREF customColors[16];
 

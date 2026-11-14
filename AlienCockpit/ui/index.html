@@ -106,10 +106,16 @@
               <h2>RGB Lighting Studio</h2>
               <p class="subtitle">Click or drag-select keys &amp; zones to paint colors and effects in real time.</p>
             </div>
-            <div class="device-switcher">
-              <button class="seg-btn active" data-view="keyboard">Keyboard</button>
-              <button class="seg-btn" data-view="mouse">Gaming Mouse</button>
-              <button class="seg-btn" data-view="chassis">Chassis &amp; Zones</button>
+            <div class="lighting-header-actions">
+              <button type="button" class="btn-global-summer" id="btn-global-summer" aria-pressed="false" title="Toggle Global Summer Mode across the active profile (ocean shimmer + key-press ripples)">
+                <span class="summer-dot"></span>
+                <span>🌊 Summer Mode: <strong id="global-summer-state">OFF</strong></span>
+              </button>
+              <div class="device-switcher">
+                <button class="seg-btn active" data-view="keyboard">Keyboard</button>
+                <button class="seg-btn" data-view="mouse">Gaming Mouse</button>
+                <button class="seg-btn" data-view="chassis">Chassis &amp; Zones</button>
+              </div>
             </div>
           </div>
 
@@ -285,6 +291,13 @@
                     <span class="ctrl-val" id="zone-brightness-val">100%</span>
                   </div>
                 </div>
+                <div class="fav-colors-wrap">
+                  <div class="fav-header">
+                    <span class="sec-sub">Favorite Colors <small>(Right-click to remove)</small></span>
+                    <button type="button" class="qs-btn btn-fav-add" id="btn-add-fav-color" title="Save current Primary Color to Favorites">+ Favorite</button>
+                  </div>
+                  <div class="fav-swatches" id="fav-color-swatches"></div>
+                </div>
               </div>
 
               <div class="inspector-section">
@@ -297,7 +310,6 @@
                   <button class="eff-btn" data-eff="spectrum">Spectrum</button>
                   <button class="eff-btn" data-eff="wave">Wave</button>
                   <button class="eff-btn eff-aurora" data-eff="aurora">✦ Aurora</button>
-                  <button class="eff-btn eff-summer" data-eff="summer">🌊 Summer</button>
                 </div>
 
                 <div class="secondary-color-row" id="secondary-color-wrap" style="display:none;">
@@ -529,7 +541,7 @@
           <div class="card about-card">
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div>
-              <h3>AlienCockpit v1.0.7 — AWCC Alternative</h3>
+              <h3>AlienCockpit v1.0.8 — AWCC Alternative</h3>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
               <div class="credits-author">
                 <span>Crafted by <strong>Irving Ngr</strong></span>

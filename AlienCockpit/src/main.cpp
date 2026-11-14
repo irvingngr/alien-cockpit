@@ -150,12 +150,13 @@ static void UpdateTrayIconAndTooltip(bool forceScan = false) {
 
     for (const auto& b : g_cachedBatteries) {
         std::wstring part;
+        std::wstring pctStr = (b.percentage < 0) ? L"Sleep" : (std::to_wstring(b.percentage) + L"%");
         if (b.type == "system") {
-            part = L" | Laptop: " + std::to_wstring(b.percentage) + L"%";
+            part = L" | Laptop: " + pctStr;
         } else if (b.type == "mouse") {
-            part = L" | Mouse: " + std::to_wstring(b.percentage) + L"%";
+            part = L" | Mouse: " + pctStr;
         } else {
-            part = L" | " + Utf8ToWide(b.name.substr(0, 14)) + L": " + std::to_wstring(b.percentage) + L"%";
+            part = L" | " + Utf8ToWide(b.name.substr(0, 14)) + L": " + pctStr;
         }
         if (tip.size() + part.size() < 127) {
             tip += part;
@@ -358,13 +359,19 @@ static void EnsureDefaultDeviceMappings() {
                     }
                     anyAdded = true;
                 } else {
-                    byte fallbackCount = (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0)
-                        ? dev.dev->v4MaxZones : 16;
+                    byte fallbackCount = 16;
+                    if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0) {
+                        fallbackCount = dev.dev->v4MaxZones;
+                    } else if (dev.dev && dev.dev->version == AlienFX_SDK::API_ACPI) {
+                        fallbackCount = 8;
+                    }
                     for (byte i = 0; i < fallbackCount; ++i) {
                         AlienFX_SDK::Afx_light l{};
                         l.lightid = i;
                         l.flags = 0;
-                        l.name = "LED Zone " + std::to_string(i);
+                        l.name = (dev.dev && dev.dev->version == AlienFX_SDK::API_ACPI)
+                            ? ("ACPI Chassis Zone " + std::to_string(i))
+                            : ("LED Zone " + std::to_string(i));
                         dev.lights.push_back(l);
                     }
                     anyAdded = true;
@@ -564,6 +571,7 @@ static void InitWebView(HWND hwnd) {
                                             }
                                             std::string resp = CockpitBridge::HandleMessage(jsonStr);
                                             if (jsonStr.find("\"toggleLights\"") != std::string::npos ||
+                                                jsonStr.find("\"toggleSummer\"") != std::string::npos ||
                                                 jsonStr.find("\"activateProfile\"") != std::string::npos ||
                                                 jsonStr.find("\"applyGamePreset\"") != std::string::npos ||
                                                 jsonStr.find("\"restorePreset\"") != std::string::npos ||

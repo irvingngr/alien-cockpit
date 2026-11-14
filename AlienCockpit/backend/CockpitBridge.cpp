@@ -260,7 +260,22 @@ std::string CockpitBridge::BuildFullStateJson() {
     settings["startMinimized"] = (conf->startMinimized != 0);
     settings["alwaysAdmin"] = (conf->alwaysAdmin != 0);
     settings["startupIntro"] = (conf->startupIntro != 0);
+    settings["summerMode"] = (conf->summerMode != 0);
     settings["isAdmin"] = (IsUserAnAdmin() != FALSE);
+    {
+        SimpleJson::Value favs = SimpleJson::Value::Array();
+        const std::string& rawFav = conf->favoriteColors;
+        size_t pos = 0;
+        while (pos < rawFav.size()) {
+            size_t comma = rawFav.find(',', pos);
+            std::string tok = (comma == std::string::npos) ? rawFav.substr(pos) : rawFav.substr(pos, comma - pos);
+            tok = TrimWhitespace(tok);
+            if (!tok.empty()) favs.push(tok);
+            if (comma == std::string::npos) break;
+            pos = comma + 1;
+        }
+        settings["favorites"] = favs;
+    }
     root["settings"] = settings;
 
     // Devices & Lights
@@ -342,14 +357,25 @@ std::string CockpitBridge::BuildFullStateJson() {
             }
             gso["lights"] = glights;
 
+            int zb = std::clamp(static_cast<int>(gs.brightness), 5, 100);
+            gso["brightness"] = zb;
+            auto unscaleChan = [zb](byte v) -> byte {
+                if (zb >= 100) return v;
+                return static_cast<byte>(std::clamp(static_cast<int>(std::lround((v * 100.0) / zb)), 0, 255));
+            };
+
             if (!gs.color.empty()) {
-                gso["color"] = ColorToHex(gs.color[0].r, gs.color[0].g, gs.color[0].b);
+                if (gs.baseColor.br != 0) {
+                    gso["color"] = ColorToHex(gs.baseColor.r, gs.baseColor.g, gs.baseColor.b);
+                } else {
+                    gso["color"] = ColorToHex(unscaleChan(gs.color[0].r), unscaleChan(gs.color[0].g), unscaleChan(gs.color[0].b));
+                }
                 gso["effect"] = EffectTypeToName(gs.color[0].type, gs.color.size());
                 gso["speed"] = static_cast<int>(gs.color[0].tempo);
                 if (gs.color.size() > 1)
-                    gso["color2"] = ColorToHex(gs.color[1].r, gs.color[1].g, gs.color[1].b);
+                    gso["color2"] = ColorToHex(unscaleChan(gs.color[1].r), unscaleChan(gs.color[1].g), unscaleChan(gs.color[1].b));
                 if (gs.color.size() > 2)
-                    gso["color3"] = ColorToHex(gs.color[2].r, gs.color[2].g, gs.color[2].b);
+                    gso["color3"] = ColorToHex(unscaleChan(gs.color[2].r), unscaleChan(gs.color[2].g), unscaleChan(gs.color[2].b));
             } else {
                 gso["color"] = "#00f0ff";
                 gso["effect"] = "static";
@@ -420,6 +446,32 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         return BuildFullStateJson();
     }
 
+    if (cmd == "toggleSummer" && conf && fxhl) {
+        conf->summerMode = msg.get("enabled").asBool(false) ? 1 : 0;
+        BeginCrossfade(600);
+        if (!conf->summerMode) {
+            // Clear unmapped static V5/ACPI keys back to dark before restoring active profile lightsets
+            fxhl->QueryAllDevs(LightQueryElement({ 0, 5 }));
+            vector<AlienFX_SDK::Afx_action> darkAct{ { AlienFX_SDK::AlienFX_A_Color, 5, 50, 0, 0, 0 } };
+            for (const auto& dev : conf->afx_dev.fxdevs) {
+                if (!dev.present || !dev.dev) continue;
+                if (dev.dev->version != AlienFX_SDK::API_V5 && dev.dev->version != AlienFX_SDK::API_ACPI) continue;
+                for (const auto& l : dev.lights) {
+                    if (l.flags & ALIENFX_FLAG_POWER) continue;
+                    fxhl->SetLight(MAKELONG(dev.pid, l.lightid), &darkAct);
+                }
+            }
+            fxhl->Refresh(true);
+        } else {
+            fxhl->deferV5Refresh = true;
+            fxhl->ClearAndRefresh(true);
+            fxhl->deferV5Refresh = false;
+        }
+        CockpitBridge::StepAnimatedEffects();
+        conf->Save();
+        return BuildFullStateJson();
+    }
+
     if (cmd == "setBrightness" && conf && fxhl) {
         int val = msg.get("value").asInt(100);
         if (val < 0) val = 0;
@@ -454,11 +506,11 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             return static_cast<byte>(std::clamp(static_cast<int>(std::lround(v * (zBright / 100.0))), 0, 255));
         };
 
-        byte r1 = 0, g1 = 240, b1 = 255;
+        byte r1Raw = 0, g1Raw = 240, b1Raw = 255;
         byte r2 = 123, g2 = 44, b2 = 191;
-        HexToRgb(hex1, r1, g1, b1);
+        HexToRgb(hex1, r1Raw, g1Raw, b1Raw);
         HexToRgb(hex2, r2, g2, b2);
-        r1 = scaleChan(r1); g1 = scaleChan(g1); b1 = scaleChan(b1);
+        byte r1 = scaleChan(r1Raw), g1 = scaleChan(g1Raw), b1 = scaleChan(b1Raw);
         r2 = scaleChan(r2); g2 = scaleChan(g2); b2 = scaleChan(b2);
 
         if (!conf->activeProfile) {
@@ -625,6 +677,8 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 targetSet = &conf->activeProfile->lightsets.back();
             }
 
+            targetSet->brightness = static_cast<byte>(zBright);
+            targetSet->baseColor = AlienFX_SDK::Afx_colorcode(b1Raw, g1Raw, r1Raw, 0xff);
             targetSet->color.clear();
             AlienFX_SDK::Afx_action act1{};
             act1.type = EffectNameToType(eff);
@@ -1044,6 +1098,18 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             conf->fanControl = msg.get("fanControl").asBool(false) ? 1 : 0;
             if (eve) eve->ToggleFans();
         }
+        if (msg.has("favorites")) {
+            const auto& favArr = msg.get("favorites").arrVal;
+            std::string joined;
+            for (const auto& fv : favArr) {
+                std::string c = TrimWhitespace(fv.asString());
+                if (c.size() == 7 && c[0] == '#') {
+                    if (!joined.empty()) joined += ",";
+                    joined += c;
+                }
+            }
+            conf->favoriteColors = joined;
+        }
         conf->Save();
         if (fxhl) fxhl->Refresh(true);
         return BuildFullStateJson();
@@ -1209,6 +1275,7 @@ void CockpitBridge::NotifyKeyPress(unsigned long vkCode) {
 
 bool CockpitBridge::IsSummerEffectActive() {
     if (!conf || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return false;
+    if (conf->summerMode) return true;
     conf->modifyProfile.lockRead();
     bool active = false;
     for (const auto& ls : conf->activeProfile->lightsets) {
@@ -1300,6 +1367,82 @@ void CockpitBridge::StepAnimatedEffects() {
                 [nowMs](const WaterDrop& d) { return (nowMs - d.startMs) > 2000; }),
             g_waterDrops.end());
         dropsSnapshot = g_waterDrops;
+    }
+
+    if (conf->summerMode) {
+        double tNorm = 0.5;
+        double cyclesPerSec = 0.035 + std::pow(tNorm, 1.75) * 0.65;
+        double angle = nowSec * cyclesPerSec * 6.283185307179586;
+        bool anySummerUpdated = false;
+        bool finalSettleFrame = (isFading && fadeT >= 1.0);
+        AlienFX_SDK::Afx_action waterBase{};
+        waterBase.r = 42; waterBase.g = 196; waterBase.b = 255;
+        AlienFX_SDK::Afx_action dark{ 0 };
+        AlienFX_SDK::Afx_action crest{};
+        crest.type = AlienFX_SDK::AlienFX_A_Color;
+        crest.r = 165; crest.g = 248; crest.b = 255;
+
+        for (const auto& dev : conf->afx_dev.fxdevs) {
+            if (!dev.present || !dev.dev) continue;
+            if (dev.dev->version != AlienFX_SDK::API_V5 &&
+                dev.dev->version != AlienFX_SDK::API_ACPI) {
+                continue;
+            }
+            fxhl->modifyQuery.lockRead();
+            auto qIt = fxhl->devLightQuery.find(dev.pid);
+            size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+            HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
+            fxhl->modifyQuery.unlockRead();
+            if (qSize > 0 && hEvt) SetEvent(hEvt);
+            if ((!finalSettleFrame && qSize > 12) || (qSize > 250)) continue;
+
+            for (const auto& l : dev.lights) {
+                if (l.flags & ALIENFX_FLAG_POWER) continue;
+                double nx = 0.0, ny = 0.0;
+                GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
+                double shimmer = 0.48 + 0.09 * (0.5 + 0.5 * std::sin(angle * 0.85 + nx * 3.1 - ny * 2.2));
+                AlienFX_SDK::Afx_action frame = LerpColor(dark, waterBase, shimmer);
+
+                double waveEnergy = 0.0;
+                for (const auto& drop : dropsSnapshot) {
+                    double ageSec = static_cast<double>(nowMs - drop.startMs) / 1000.0;
+                    if (ageSec < 0.0 || ageSec > 1.85) continue;
+                    double dist = std::hypot((nx - drop.x) * 1.85, (ny - drop.y));
+                    double radius = ageSec * (0.72 + tNorm * 0.85);
+                    double env = 1.0 - std::clamp(ageSec / 1.85, 0.0, 1.0);
+                    env *= env;
+                    double ring1 = std::exp(-((dist - radius) * (dist - radius)) / 0.032);
+                    double ring2 = (radius > 0.28)
+                        ? 0.45 * std::exp(-((dist - (radius - 0.28)) * (dist - (radius - 0.28))) / 0.025)
+                        : 0.0;
+                    double splash = (ageSec < 0.25 && dist < 0.22) ? (1.0 - ageSec / 0.25) * (1.0 - dist / 0.22) : 0.0;
+                    waveEnergy += (ring1 + ring2 + splash) * env;
+                }
+                if (waveEnergy > 0.001) {
+                    frame = LerpColor(frame, crest, std::clamp(waveEnergy, 0.0, 1.0));
+                }
+
+                DWORD lgh = MAKELONG(dev.pid, l.lightid);
+                if (isFading && fadeT < 1.0) {
+                    auto pIt = g_crossfade.prevColors.find(lgh);
+                    AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
+                    frame = LerpColor(prev, frame, fadeT);
+                }
+
+                g_lastSentRgb[lgh] = frame;
+                std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+                fxhl->SetLight(lgh, &acts);
+                anySummerUpdated = true;
+            }
+        }
+        if (anySummerUpdated) {
+            fxhl->QueryUpdate();
+        }
+        if (isFading && fadeT >= 1.0) {
+            g_crossfade.active = false;
+            g_crossfade.prevColors.clear();
+        }
+        return;
     }
 
     bool anyUpdated = false;

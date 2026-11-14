@@ -337,14 +337,17 @@ namespace AlienFX_SDK {
 #ifndef NOACPILIGHTS
 	bool Functions::AlienFXInitialize(AlienFan_SDK::Control* acc) {
 		version = API_UNKNOWN;
-		if (acc) {
+		if (acc && acc->isAlienware) {
 			vid = 0x187c;
 			pid = 0xffff;
 			ACPIdevice = new AlienFan_SDK::Lights(acc);
 			if (((AlienFan_SDK::Lights*)ACPIdevice)->isActivated) {
 				version = API_ACPI;
+				description = "Alienware WMI Chassis / Fans";
 				return true;
 			}
+			delete (AlienFan_SDK::Lights*)ACPIdevice;
+			ACPIdevice = NULL;
 		}
 		return false;
 	}
@@ -477,11 +480,7 @@ namespace AlienFX_SDK {
 			break;
 		case API_V4:
 		{
-			vector<byte> validLights;
-			for (auto i = lights->begin(); i != lights->end(); i++) {
-				if (!v4MaxZones || *i < v4MaxZones)
-					validLights.push_back(*i);
-			}
+			vector<byte> validLights = *lights;
 			byte mode = 0x00;
 			if (c.type == AlienFX_A_Pulse || c.type == AlienFX_A_Breathing) mode = 0x01;
 			else if (c.type != AlienFX_A_Color) mode = 0x02;
@@ -513,7 +512,7 @@ namespace AlienFX_SDK {
 		{
 			DWORD fmask = 0;
 			for (auto nc = lights->begin(); nc < lights->end(); nc++)
-				fmask |= 1 << (*nc);
+				if (*nc < 32) fmask |= (1UL << (*nc));
 			SetMaskAndColor(&mods, &act, false, fmask);
 			switch (version) {
 			case API_V6:
@@ -524,7 +523,7 @@ namespace AlienFX_SDK {
 			//	break;
 #ifndef NOACPILIGHTS
 			case API_ACPI:
-				val = ((AlienFan_SDK::Lights*)ACPIdevice)->SetColor((byte)fmask, c.r, c.g, c.b);
+				val = ((AlienFan_SDK::Lights*)ACPIdevice)->SetColor(fmask, c.r, c.g, c.b);
 				break;
 #endif
 			default:
@@ -597,7 +596,6 @@ namespace AlienFX_SDK {
 
 	bool Functions::SetV4Action(Afx_lightblock* act) {
 		if (!act || act->act.empty()) return false;
-		if (v4MaxZones && act->index >= v4MaxZones) return false;
 		bool res = false;
 		vector<Afx_icommand> mods;
 		PrepareAndSend(COMMV4_colorSel, { {6,{act->index}} });
@@ -720,7 +718,9 @@ namespace AlienFX_SDK {
 		}
 #ifndef NOACPILIGHTS
 		case API_ACPI:
-			return ((AlienFan_SDK::Lights*)ACPIdevice)->SetColor(1 << act->index, act->act.front().r, act->act.front().g, act->act.front().b);
+			return (act->index < 32)
+				? ((AlienFan_SDK::Lights*)ACPIdevice)->SetColor(1UL << act->index, act->act.front().r, act->act.front().g, act->act.front().b)
+				: false;
 #endif
 		}
 		return false;
@@ -735,8 +735,7 @@ namespace AlienFX_SDK {
 			PrepareAndSend(COMMV4_control, { { 4, {1,0,0x61} } });
 			vector<byte> validIds;
 			for (auto ca = act->begin(); ca != act->end(); ca++) {
-				if (!ca->act.empty() && ca->act.front().type != AlienFX_A_Power &&
-					(!v4MaxZones || ca->index < v4MaxZones)) {
+				if (!ca->act.empty() && ca->act.front().type != AlienFX_A_Power) {
 					SetV4Action(&(*ca));
 					validIds.push_back(ca->index);
 				}
@@ -882,7 +881,6 @@ namespace AlienFX_SDK {
 			int pos = 6;
 			vector<Afx_icommand> mods;
 			for (auto i = mappings->begin(); i < mappings->end(); i++) {
-				if (v4MaxZones && i->lightid >= v4MaxZones) continue;
 				if (pos >= 31) {
 					mods.push_back({ 3,{(byte)(0x64 - bright), 0, (byte)(pos - 6)} });
 					PrepareAndSend(COMMV4_turnOn, &mods);
@@ -1037,8 +1035,9 @@ namespace AlienFX_SDK {
 	}
 
 	Functions::~Functions() {
-		if (version != API_UNKNOWN) {
+		if (version != API_UNKNOWN && devHandle) {
 			CloseHandle(devHandle);
+			devHandle = NULL;
 		}
 #ifndef NOACPILIGHTS
 		if (ACPIdevice) {

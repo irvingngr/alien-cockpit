@@ -406,6 +406,17 @@ void FXHelper::Refresh(bool forced)
 		RefreshZone(&it, false);
 	}
 	conf->modifyProfile.unlockRead();
+	if (conf->summerMode) {
+		vector<AlienFX_SDK::Afx_action> summerCyan{ { AlienFX_SDK::AlienFX_A_Color, 5, 50, 42, 196, 255 } };
+		for (const auto& dev : conf->afx_dev.fxdevs) {
+			if (!dev.present || !dev.dev) continue;
+			if (dev.dev->version == AlienFX_SDK::API_V5 || dev.dev->version == AlienFX_SDK::API_ACPI) continue;
+			for (const auto& l : dev.lights) {
+				if (l.flags & ALIENFX_FLAG_POWER) continue;
+				SetLight(MAKELONG(dev.pid, l.lightid), &summerCyan);
+			}
+		}
+	}
 	if (!forced && conf->stateEffects && eve) {
 		RefreshCounters(true);
 		RefreshAmbient(true);
@@ -782,6 +793,7 @@ void FXHelper::RefreshGrid(bool fromRefresh) {
 }
 
 DWORD WINAPI CLightsProc(LPVOID param) {
+	HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 	LightQueryData* ld = (LightQueryData*)param;
 	FXHelper* src = (FXHelper *)ld->src;
 	WORD pid = ld->pid;
@@ -885,5 +897,6 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 		}
 	}
 	delete ld;
+	if (SUCCEEDED(hrCom)) CoUninitialize();
 	return 0;
 }

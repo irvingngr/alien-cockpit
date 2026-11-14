@@ -153,6 +153,173 @@ static bool TryReadHidBatteryReport(HANDLE hDev, PHIDP_PREPARSED_DATA preparsed,
     return false;
 }
 
+static std::string ToLowerAscii(const std::string& s) {
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
+    GUID hidGuid{};
+    HidD_GetHidGuid(&hidGuid);
+    HDEVINFO hHidInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (hHidInfo == INVALID_HANDLE_VALUE) return false;
+
+    struct CandidatePath {
+        std::wstring path;
+        int priority;
+    };
+    std::vector<CandidatePath> candidates;
+
+    SP_DEVICE_INTERFACE_DATA ifData{};
+    ifData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+    for (DWORD idx = 0; SetupDiEnumDeviceInterfaces(hHidInfo, nullptr, &hidGuid, idx, &ifData); ++idx) {
+        DWORD reqLen = 0;
+        SetupDiGetDeviceInterfaceDetailW(hHidInfo, &ifData, nullptr, 0, &reqLen, nullptr);
+        if (reqLen == 0) continue;
+
+        std::vector<BYTE> detailBuf(reqLen);
+        auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detailBuf.data());
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+        if (!SetupDiGetDeviceInterfaceDetailW(hHidInfo, &ifData, detail, reqLen, nullptr, nullptr))
+            continue;
+
+        std::string pathLower = ToLowerAscii(WideToUtf8(detail->DevicePath));
+        if (pathLower.find("vid_0d62") == std::string::npos || pathLower.find("pid_9abc") == std::string::npos)
+            continue;
+
+        int prio = 2;
+        if (pathLower.find("col02") != std::string::npos) prio = 0;
+        else if (pathLower.find("col01") != std::string::npos) prio = 1;
+        candidates.push_back({ detail->DevicePath, prio });
+    }
+    SetupDiDestroyDeviceInfoList(hHidInfo);
+
+    if (candidates.empty()) return false;
+
+    std::sort(candidates.begin(), candidates.end(),
+        [](const CandidatePath& a, const CandidatePath& b) { return a.priority < b.priority; });
+
+    bool sawSleep = false;
+    std::string deviceLabel = "Alienware AW610M Wireless Mouse";
+
+    for (const auto& cand : candidates) {
+        HANDLE hDev = CreateFileW(cand.path.c_str(), GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (hDev == INVALID_HANDLE_VALUE) {
+            hDev = CreateFileW(cand.path.c_str(), 0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        }
+        if (hDev == INVALID_HANDLE_VALUE) continue;
+
+        HIDD_ATTRIBUTES attrs{};
+        attrs.Size = sizeof(HIDD_ATTRIBUTES);
+        if (!HidD_GetAttributes(hDev, &attrs) || attrs.VendorID != 0x0D62 || attrs.ProductID != 0x9ABC) {
+            CloseHandle(hDev);
+            continue;
+        }
+
+        wchar_t prodStr[128]{};
+        if (HidD_GetProductString(hDev, prodStr, sizeof(prodStr)) && prodStr[0] != L'\0') {
+            std::string pName = WideToUtf8(prodStr);
+            if (!pName.empty()) deviceLabel = pName;
+        }
+
+        ULONG capLen = 0;
+        PHIDP_PREPARSED_DATA preparsed = nullptr;
+        if (HidD_GetPreparsedData(hDev, &preparsed) && preparsed) {
+            HIDP_CAPS caps{};
+            if (HidP_GetCaps(preparsed, &caps) == HIDP_STATUS_SUCCESS && caps.FeatureReportByteLength > 0) {
+                capLen = caps.FeatureReportByteLength;
+            }
+            HidD_FreePreparsedData(preparsed);
+        }
+
+        std::vector<ULONG> lengths;
+        if (capLen > 0) lengths.push_back(capLen);
+        if (capLen != 65) lengths.push_back(65);
+        if (capLen != 33) lengths.push_back(33);
+
+        const BYTE reportIds[] = { 0x22, 0x02 };
+        bool gotLive = false;
+
+        for (BYTE rid : reportIds) {
+            for (ULONG repLen : lengths) {
+                if (repLen < 7) continue;
+
+                std::vector<BYTE> outBuf(repLen, 0);
+                outBuf[0] = rid;
+                outBuf[1] = 0x20;
+                if (!HidD_SetFeature(hDev, outBuf.data(), repLen)) {
+                    continue;
+                }
+
+                std::vector<BYTE> inBuf(repLen, 0);
+                inBuf[0] = rid;
+                if (!HidD_GetFeature(hDev, inBuf.data(), repLen)) {
+                    continue;
+                }
+
+                bool allZero = std::all_of(inBuf.begin() + 1, inBuf.end(),
+                    [](BYTE b) { return b == 0; });
+                if (allZero) {
+                    sawSleep = true;
+                    continue;
+                }
+
+                int pct = -1;
+                const size_t candIdx[] = { 4, 5, 6 };
+                for (size_t idx : candIdx) {
+                    if (idx < inBuf.size() && inBuf[idx] > 0 && inBuf[idx] <= 100) {
+                        pct = static_cast<int>(inBuf[idx]);
+                        break;
+                    }
+                }
+                if (pct < 0 && (inBuf[1] == 0x20 || inBuf[2] != 0 || inBuf[3] != 0)) {
+                    for (size_t idx : candIdx) {
+                        if (idx < inBuf.size() && inBuf[idx] <= 100) {
+                            pct = static_cast<int>(inBuf[idx]);
+                            break;
+                        }
+                    }
+                }
+
+                if (pct >= 0 && pct <= 100) {
+                    BatteryDeviceInfo info;
+                    info.id = "aw610m-darfon";
+                    info.name = deviceLabel;
+                    info.type = "mouse";
+                    info.percentage = pct;
+                    info.charging = false;
+                    info.acOnline = false;
+                    AddUniqueBattery(result, info);
+                    gotLive = true;
+                    break;
+                }
+            }
+            if (gotLive) break;
+        }
+
+        CloseHandle(hDev);
+        if (gotLive) return true;
+    }
+
+    if (sawSleep) {
+        BatteryDeviceInfo info;
+        info.id = "aw610m-darfon";
+        info.name = deviceLabel;
+        info.type = "mouse";
+        info.percentage = -1; // Deep sleep / idle
+        info.charging = false;
+        info.acOnline = false;
+        AddUniqueBattery(result, info);
+        return true;
+    }
+
+    return false;
+}
+
 std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
     std::vector<BatteryDeviceInfo> result;
 
@@ -172,7 +339,10 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
         }
     }
 
-    // 2. Windows Battery Class Devices (catches HID Battery Minidriver / BLE / Wireless Receiver batteries)
+    // 2. Darfon / Alienware AW610M Wireless Mouse proprietary Feature Report telemetry (VID_0D62 & PID_9ABC)
+    QueryDarfonAW610MBattery(result);
+
+    // 3. Windows Battery Class Devices (catches HID Battery Minidriver / BLE / Wireless Receiver batteries)
     HDEVINFO hBattInfo = SetupDiGetClassDevsW(&GUID_DEVICE_BATTERY, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
     if (hBattInfo != INVALID_HANDLE_VALUE) {
         SP_DEVICE_INTERFACE_DATA ifData{};
@@ -244,7 +414,7 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
         SetupDiDestroyDeviceInfoList(hBattInfo);
     }
 
-    // 3. Connected Bluetooth / Wireless PnP Devices with DEVPKEY_Device_BatteryPercentage
+    // 4. Connected Bluetooth / Wireless PnP Devices with DEVPKEY_Device_BatteryPercentage
     HDEVINFO hDevInfo = SetupDiGetClassDevsW(nullptr, nullptr, nullptr, DIGCF_ALLCLASSES | DIGCF_PRESENT);
     if (hDevInfo != INVALID_HANDLE_VALUE) {
         SP_DEVINFO_DATA devInfo{};
@@ -303,7 +473,7 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
         SetupDiDestroyDeviceInfoList(hDevInfo);
     }
 
-    // 4. HID Battery Strength / Power Device Usage (0x06/0x20, 0x85/0x64..0x68) across Input & Feature reports
+    // 5. HID Battery Strength / Power Device Usage (0x06/0x20, 0x85/0x64..0x68) across Input & Feature reports
     GUID hidGuid{};
     HidD_GetHidGuid(&hidGuid);
     HDEVINFO hHidInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);

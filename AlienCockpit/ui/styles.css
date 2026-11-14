@@ -1075,7 +1075,7 @@ html, body {
 
 /* Aurora Effect & Palettes */
 .eff-aurora {
-  grid-column: span 3;
+  grid-column: span 6;
   background: linear-gradient(90deg, rgba(0, 240, 255, 0.12), rgba(0, 255, 157, 0.12), rgba(123, 44, 191, 0.15));
   border-color: rgba(0, 240, 255, 0.25);
   color: var(--text-main);
@@ -1571,4 +1571,118 @@ html, body {
   border-radius: 3px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   flex-shrink: 0;
+}
+
+/* Global Summer Mode Toggle & Active Ocean Canvas */
+.lighting-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-global-summer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  background: rgba(16, 23, 41, 0.9);
+  color: #a9d9f5;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.btn-global-summer:hover {
+  border-color: #38bdf8;
+  color: #e0f7ff;
+}
+
+.btn-global-summer .summer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #475569;
+  transition: all 0.18s;
+}
+
+.btn-global-summer.active {
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.42), rgba(56, 189, 248, 0.26));
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
+}
+
+.btn-global-summer.active .summer-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+.device-canvas.summer-active .kbd-frame,
+.device-canvas.summer-active .kbd-numpad,
+.device-canvas.summer-active .mouse-stage,
+.device-canvas.summer-active .chassis-stage {
+  box-shadow: inset 0 0 32px rgba(42, 196, 255, 0.14);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+/* Favorite Colors Section */
+.fav-colors-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.fav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.fav-header small {
+  font-size: 9.5px;
+  opacity: 0.78;
+}
+
+.btn-fav-add {
+  padding: 3px 8px;
+  font-size: 10.5px;
+  border-color: rgba(0, 240, 255, 0.28);
+  color: var(--cyan);
+}
+
+.fav-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 22px;
+  align-items: center;
+}
+
+.fav-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.fav-swatch:hover {
+  transform: scale(1.14);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+}
+
+.batt-card.sleep .batt-pct {
+  font-size: 19px;
+  color: var(--amber);
 }

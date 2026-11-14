@@ -133,29 +133,28 @@ namespace AlienFan_SDK {
 		vector<byte> powers;
 	};
 
-	//class Lights {
-	//private:
-	//	const BSTR colorList[2]{
-	//		//(BSTR)L"SetLEDColor",			// 0x04
-	//		(BSTR)L"Set24BitsLEDColor",		// 0x12
-	//		(BSTR)L"LEDBrightness"			// 0x03
-	//	};
+	class Lights {
+	private:
+		const BSTR colorList[2]{
+			(BSTR)L"Set24BitsLEDColor",		// 0x12
+			(BSTR)L"LEDBrightness"			// 0x03
+		};
 
-	//	IWbemClassObject* m_InParamaters = NULL;
-	//	IWbemServices* m_WbemServices = NULL;
-	//	VARIANT m_instancePath;
-	//	int CallWMIMethod(byte com, byte* arg1);
-	//public:
-	//	bool isActivated = false;
+		IWbemClassObject* m_InParamaters[2]{ NULL, NULL };
+		IWbemServices* m_WbemServices = NULL;
+		VARIANT m_instancePath{};
+		int CallWMIMethod(byte com, byte* arg1);
+	public:
+		bool isActivated = false;
 
-	//	Lights(Control *ac);
+		Lights(Control* ac);
+		~Lights();
 
-	//	// Set lights brightness, 0..F
-	//	bool SetBrightness(byte brightness);
+		// Set lights brightness, 0..F
+		bool SetBrightness(byte brightness);
 
-	//	// Set color of lights mask defined by id to RGB
-	//	bool SetColor(byte mask, byte r, byte g, byte b, bool save = false);
-
-	//};
+		// Set color of lights mask defined by bitmask to RGB
+		bool SetColor(DWORD mask, byte r, byte g, byte b, bool save = false);
+	};
 
 }

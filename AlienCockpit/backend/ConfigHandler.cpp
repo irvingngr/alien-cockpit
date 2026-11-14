@@ -194,6 +194,15 @@ void ConfigHandler::Load() {
 	GetReg("KeyboardShortcut", &keyShortcuts, 1);
 	GetReg("GESpeed", &geTact, 100);
 	GetReg("MonDC", &dcFreq, 0);
+	GetReg("SummerMode", &summerMode, 0);
+
+	{
+		char favBuf[2048]{};
+		DWORD favSize = sizeof(favBuf);
+		if (RegGetValueA(hKeyMain, NULL, "FavoriteColors", RRF_RT_REG_SZ, NULL, favBuf, &favSize) == ERROR_SUCCESS) {
+			favoriteColors = favBuf;
+		}
+	}
 
 	RegGetValue(hKeyMain, NULL, TEXT("CustomColors"), RRF_RT_REG_BINARY | RRF_ZEROONFAILURE, NULL, customColors, &size_c);
 
@@ -280,6 +289,17 @@ void ConfigHandler::Load() {
 			gset->fromColor = data[0];
 			gset->gauge = data[1];
 			gset->gaugeflags = ((WORD*)data)[1];
+			continue;
+		}
+		if (sscanf_s((char*)name, "Zone-bright-%d-%d", &profID, &groupID) == 2) {
+			gset = FindCreateGroupSet(profID, groupID);
+			DWORD br = *(DWORD*)data;
+			gset->brightness = (byte)(br < 5 ? 5 : (br > 100 ? 100 : br));
+			continue;
+		}
+		if (sscanf_s((char*)name, "Zone-baseclr-%d-%d", &profID, &groupID) == 2) {
+			gset = FindCreateGroupSet(profID, groupID);
+			gset->baseColor.cf = *(DWORD*)data;
 			continue;
 		}
 		if (sscanf_s((char*)name, "Zone-eventlist-%d-%d", &profID, &groupID) == 2) {
@@ -392,6 +412,8 @@ void ConfigHandler::Save() {
 	SetReg("KeyboardShortcut", keyShortcuts);
 	SetReg("GESpeed", geTact);
 	SetReg("MonDC", dcFreq);
+	SetReg("SummerMode", summerMode);
+	RegSetValueExA(hKeyMain, "FavoriteColors", 0, REG_SZ, (const BYTE*)favoriteColors.c_str(), (DWORD)(favoriteColors.size() + 1));
 
 	RegSetValueEx(hKeyMain, TEXT("CustomColors"), 0, REG_BINARY, (BYTE*)customColors, sizeof(DWORD) * 16);
 
@@ -436,6 +458,16 @@ void ConfigHandler::Save() {
 			fname = "Zone-flags-" + name;
 			DWORD value = MAKELPARAM(MAKEWORD(iIter->fromColor, iIter->gauge), iIter->gaugeflags);
 			RegSetValueEx(hKeyZones, fname.c_str(), 0, REG_DWORD, (BYTE*)&value, sizeof(DWORD));
+
+			if (iIter->brightness != 100) {
+				fname = "Zone-bright-" + name;
+				DWORD zbr = iIter->brightness;
+				RegSetValueEx(hKeyZones, fname.c_str(), 0, REG_DWORD, (BYTE*)&zbr, sizeof(DWORD));
+			}
+			if (iIter->baseColor.cf != 0) {
+				fname = "Zone-baseclr-" + name;
+				RegSetValueEx(hKeyZones, fname.c_str(), 0, REG_DWORD, (BYTE*)&iIter->baseColor.cf, sizeof(DWORD));
+			}
 
 			if (iIter->color.size()) { // colors
 				fname = "Zone-colors-" + name + "-" + to_string(iIter->color.size());

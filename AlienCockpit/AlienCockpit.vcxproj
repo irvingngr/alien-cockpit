@@ -134,8 +134,8 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
     <ProjectReference Include="..\alienfan-tools\alienfan-SDK_v2\alienfan-SDK_v2.vcxproj">
       <Project>{9321a480-9118-4173-b79d-45d8253c2c47}</Project>
     </ProjectReference>
-    <ProjectReference Include="..\AlienFX-SDK\AlienFX_SDK\AlienFX_SDK_noACPI.vcxproj">
-      <Project>{2fc5da06-339f-48b8-acdf-34faa8dbfbb7}</Project>
+    <ProjectReference Include="..\AlienFX-SDK\AlienFX_SDK\AlienFX_SDK.vcxproj">
+      <Project>{90879993-7449-4a28-972e-7228d4c4d0a8}</Project>
     </ProjectReference>
     <ProjectReference Include="..\Common\Common.vcxproj">
       <Project>{3d4ef0c4-282c-4318-8fbb-133514a8f0dc}</Project>
