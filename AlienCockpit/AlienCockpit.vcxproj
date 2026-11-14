@@ -58,6 +58,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
+      <GenerateManifest>false</GenerateManifest>
       <AdditionalDependencies>dwmapi.lib;shlwapi.lib;shell32.lib;setupapi.lib;cfgmgr32.lib;wbemuuid.lib;winmm.lib;dxgi.lib;d3d11.lib;wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
@@ -79,6 +80,7 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
+      <GenerateManifest>false</GenerateManifest>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>dwmapi.lib;shlwapi.lib;shell32.lib;setupapi.lib;cfgmgr32.lib;wbemuuid.lib;winmm.lib;dxgi.lib;d3d11.lib;wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
