@@ -31,7 +31,10 @@ MonHelper* mon = nullptr;
 ConfigFan* fan_conf = nullptr;
 HANDLE haveLightFX = nullptr;
 groupset* activeMapping = nullptr;
-int dxgi_counter = 0;
+int idc_version = 0;
+int idc_homepage = 0;
+bool isNewVersion = false;
+bool needUpdateFeedback = false;
 
 void Code2Act(AlienFX_SDK::Afx_colorcode c, AlienFX_SDK::Afx_action* fill) {
     if (fill) {

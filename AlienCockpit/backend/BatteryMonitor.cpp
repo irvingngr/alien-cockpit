@@ -1,5 +1,6 @@
 #include "BatteryMonitor.h"
 #include <windows.h>
+#include <initguid.h>
 #include <setupapi.h>
 #include <devpkey.h>
 #include <cfgmgr32.h>

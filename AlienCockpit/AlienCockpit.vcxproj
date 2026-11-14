@@ -34,7 +34,6 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="Shared">
     <Import Project="..\alienfan-tools\alienfan-shared\alienfan-shared.vcxitems" Label="Shared" />
-    <Import Project="..\alienfan-tools\alienfan-curve\alienfan-curve.vcxitems" Label="Shared" />
     <Import Project="..\alienfan-tools\alienfan-mon\alienfan-mon.vcxitems" Label="Shared" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -52,9 +51,10 @@
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <PreprocessorDefinitions>_DEBUG;_WINDOWS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;backend;kiss_fft;..\Common;..\RegHelperLib;..\AlienFX-SDK\AlienFX_SDK;..\alienfan-tools\alienfan-SDK_v2;..\alienfan-tools\alienfan-shared;..\alienfan-tools\alienfan-mon;..\alienfan-tools\alienfan-curve;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <ConformanceMode>true</ConformanceMode>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>src;backend;kiss_fft;..\Common;..\RegHelperLib;..\AlienFX-SDK\AlienFX_SDK;..\alienfan-tools\alienfan-SDK_v2;..\alienfan-tools\alienfan-shared;..\alienfan-tools\alienfan-mon;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ConformanceMode>false</ConformanceMode>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -72,8 +72,9 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;backend;kiss_fft;..\Common;..\RegHelperLib;..\AlienFX-SDK\AlienFX_SDK;..\alienfan-tools\alienfan-SDK_v2;..\alienfan-tools\alienfan-shared;..\alienfan-tools\alienfan-mon;..\alienfan-tools\alienfan-curve;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;backend;kiss_fft;..\Common;..\RegHelperLib;..\AlienFX-SDK\AlienFX_SDK;..\alienfan-tools\alienfan-SDK_v2;..\alienfan-tools\alienfan-shared;..\alienfan-tools\alienfan-mon;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ConformanceMode>false</ConformanceMode>
     </ClCompile>
     <Link>
