@@ -490,6 +490,7 @@ html, body {
 .keycap.w-175 { flex: 1.75; }
 .keycap.w-2 { flex: 2; }
 .keycap.w-225 { flex: 2.25; }
+.keycap.w-45 { flex: 4.5; }
 .keycap.w-5 { flex: 5.0; }
 .keycap.w-55 { flex: 5.5; }
 .keycap.w-6 { flex: 6.2; }
@@ -1351,6 +1352,40 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.probe-dev-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.probe-dev-prefix {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.probe-dev-select {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 11px;
+  max-width: 175px;
+  color-scheme: dark;
+  outline: none;
+  cursor: pointer;
+}
+
+.probe-dev-select:focus {
+  border-color: var(--cyan);
+}
+
+.probe-dev-select option {
+  background-color: #0b101d;
+  color: #e6eef8;
 }
 
 .probe-stepper {

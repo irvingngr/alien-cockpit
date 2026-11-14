@@ -21,6 +21,10 @@ extern "C" {
 
 namespace AlienFX_SDK {
 
+	static inline int ClampInt(int v, int lo, int hi) {
+		return (v < lo) ? lo : (v > hi ? hi : v);
+	}
+
 	vector<Afx_icommand> *Functions::SetMaskAndColor(vector<Afx_icommand>* mods, Afx_lightblock* act, bool needInverse, DWORD index) {
 		if (version < API_V4) {
 			// index mask generation
@@ -111,23 +115,46 @@ namespace AlienFX_SDK {
 			}
 
 			switch (version) {
-			case API_V2: case API_V3: case API_V4: //case API_V9:
-				//res = DeviceIoControl(devHandle, IOCTL_HID_SET_OUTPUT_REPORT, buffer, length, 0, 0, &written, NULL);
+			case API_V2: case API_V3: //case API_V9:
 				return HidD_SetOutputReport(devHandle, buffer, length);
-				//break;
+			case API_V4: {
+				BOOL ok = HidD_SetOutputReport(devHandle, buffer, length);
+				Sleep(8);
+				return ok;
+			}
 			case API_V5:
-				//res =  DeviceIoControl(devHandle, IOCTL_HID_SET_FEATURE, buffer, length, 0, 0, &written, NULL);
 				return HidD_SetFeature(devHandle, buffer, length);
-				break;
 			case API_V6:
-				/*res =*/return WriteFile(devHandle, buffer, length, &written, NULL);
-				//if (size == 3)
-				//	res &= ReadFile(devHandle, buffer, length, &written, NULL);
-				//break;
-			case API_V7:
-				WriteFile(devHandle, buffer, length, &written, NULL);
-				return ReadFile(devHandle, buffer, length, &written, NULL);
-				//break;
+				return WriteFile(devHandle, buffer, length, &written, NULL);
+			case API_V7: {
+				HANDLE hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+				OVERLAPPED ov{};
+				ov.hEvent = hEvent;
+				BOOL wOk = WriteFile(devHandle, buffer, length, &written, &ov);
+				if (!wOk && GetLastError() == ERROR_IO_PENDING && hEvent) {
+					if (WaitForSingleObject(hEvent, 100) == WAIT_OBJECT_0) {
+						wOk = GetOverlappedResult(devHandle, &ov, &written, FALSE);
+					} else {
+						CancelIoEx(devHandle, &ov);
+					}
+				}
+				if (wOk && hEvent) {
+					ResetEvent(hEvent);
+					OVERLAPPED ovRead{};
+					ovRead.hEvent = hEvent;
+					byte rbuf[MAX_BUFFERSIZE]{};
+					DWORD readBytes = 0;
+					if (!ReadFile(devHandle, rbuf, length, &readBytes, &ovRead) && GetLastError() == ERROR_IO_PENDING) {
+						if (WaitForSingleObject(hEvent, 45) == WAIT_OBJECT_0) {
+							GetOverlappedResult(devHandle, &ovRead, &readBytes, FALSE);
+						} else {
+							CancelIoEx(devHandle, &ovRead);
+						}
+					}
+				}
+				if (hEvent) CloseHandle(hEvent);
+				return wOk != FALSE;
+			}
 			case API_V8:
 				if (needV8Feature) {
 					Sleep(4);
@@ -226,7 +253,8 @@ namespace AlienFX_SDK {
 								version = API_V6;
 							break;
 						case 0x0461: // Primax
-							version = API_V7;
+							if (caps.UsagePage >= 0xff00)
+								version = API_V7;
 							break;
 						case 0x04f2:  // Chicony
 							version = API_V8;
@@ -252,6 +280,37 @@ namespace AlienFX_SDK {
 				if (!mfg.empty() && !prod.empty()) description += " ";
 				description += prod;
 				SetCommTimeouts(devHandle, &timeouts);
+
+				v4MaxZones = 0;
+				if (version == API_V4) {
+					byte qbuf[MAX_BUFFERSIZE]{};
+					qbuf[0] = reportIDList[API_V4];
+					qbuf[1] = 0x03;
+					qbuf[2] = 0x20;
+					qbuf[3] = 0x02;
+					if (HidD_SetOutputReport(devHandle, qbuf, length)) {
+						Sleep(12);
+						byte rbuf[MAX_BUFFERSIZE]{};
+						rbuf[0] = reportIDList[API_V4];
+						BOOL got = HidD_GetInputReport(devHandle, rbuf, length);
+						if (!got) {
+							memset(rbuf, 0, sizeof(rbuf));
+							rbuf[0] = reportIDList[API_V4];
+							got = HidD_GetFeature(devHandle, rbuf, length);
+						}
+						if (got && rbuf[1] == 0x03 && rbuf[2] == 0x20 && (rbuf[4] || rbuf[5]) && rbuf[6] > 0 && rbuf[6] <= 128) {
+							v4MaxZones = rbuf[6];
+						}
+					}
+				}
+				else if (version == API_V7) {
+					HANDLE ovHandle = CreateFile(deviceInterfaceDetailData->DevicePath, GENERIC_WRITE | GENERIC_READ,
+						FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+					if (ovHandle != INVALID_HANDLE_VALUE) {
+						CloseHandle(devHandle);
+						devHandle = ovHandle;
+					}
+				}
 			}
 			//DebugPrint("Probe done, type " + to_string(version) + "\n");
 		}
@@ -300,6 +359,10 @@ namespace AlienFX_SDK {
 		//		chain = 0;
 		//	}
 		//	break;
+		case API_V7:
+			PrepareAndSend(COMMV7_status);
+			inSet = true;
+			break;
 		case API_V6:
 			// need initial reset if not done
 			if (chain) {
@@ -338,6 +401,10 @@ namespace AlienFX_SDK {
 			//	inSet = !PrepareAndSend(COMMV9_update);
 			//	GetDeviceStatus();
 			//	break;
+			case API_V7:
+				inSet = !PrepareAndSend(COMMV7_update);
+				Sleep(10);
+				break;
 			case API_V5:
 			{
 				inSet = !PrepareAndSend(COMMV5_update);
@@ -345,6 +412,7 @@ namespace AlienFX_SDK {
 			case API_V4:
 			{
 				inSet = !PrepareAndSend(COMMV4_control);
+				Sleep(20);
 			} break;
 			case API_V3: case API_V2:
 			{
@@ -409,23 +477,35 @@ namespace AlienFX_SDK {
 			break;
 		case API_V4:
 		{
-			// ToDo: Divide command for more, then 34-8 (26) lights!
-			//mods = { { 3, {c.r, c.g, c.b, 0, (byte)lights->size()} }, {8, *lights} };
-			byte pos = 8;
+			vector<byte> validLights;
 			for (auto i = lights->begin(); i != lights->end(); i++) {
-				if (pos > 33) {
-					mods.push_back({ 3, {c.r, c.g, c.b, 0, 26} });
-					val = PrepareAndSend(COMMV4_setOneColor, &mods);
-					mods.clear();
-					pos = 8;
-					UpdateColors();
-					Reset();
-				}
-				mods.push_back({ pos++, {*i} });
+				if (!v4MaxZones || *i < v4MaxZones)
+					validLights.push_back(*i);
 			}
-			if (pos > 8) {
-				mods.push_back({ 3, {c.r, c.g, c.b, 0, (byte)(pos - 8)} });
-				val = PrepareAndSend(COMMV4_setOneColor, &mods);
+			byte mode = 0x00;
+			if (c.type == AlienFX_A_Pulse || c.type == AlienFX_A_Breathing) mode = 0x01;
+			else if (c.type != AlienFX_A_Color) mode = 0x02;
+			WORD durMs = (c.type == AlienFX_A_Color) ? 0x07d0 : (WORD)ClampInt((int)c.time * 40, 200, 5000);
+			WORD tempoVal = (c.type == AlienFX_A_Color) ? 0x00fa : (WORD)ClampInt((int)c.tempo, 12, 250);
+			byte r = c.r, g = c.g, b = c.b;
+			if (r == 0 && g == 0 && b == 0) { r = g = b = 1; }
+
+			for (size_t idx = 0; idx < validLights.size(); idx += 25) {
+				size_t count = (validLights.size() - idx < 25) ? (validLights.size() - idx) : 25;
+				vector<byte> chunk(validLights.begin() + idx, validLights.begin() + idx + count);
+				mods.clear();
+				mods.push_back({ 5, { (byte)count } });
+				mods.push_back({ 6, chunk });
+				PrepareAndSend(COMMV4_colorSel, &mods);
+
+				mods.clear();
+				mods.push_back({ 3, {
+					mode,
+					(byte)(durMs >> 8), (byte)(durMs & 0xff),
+					(byte)(tempoVal >> 8), (byte)(tempoVal & 0xff),
+					r, g, b
+				} });
+				val = PrepareAndSend(COMMV4_colorSet, &mods);
 			}
 		} break;
 		case API_V3: case API_V2: case API_V6: //case API_V9: 
@@ -493,9 +573,20 @@ namespace AlienFX_SDK {
 		} break;
 		default:
 		{
-			// The rest doesn't support bulk light set
-			for (auto nc = act->begin(); nc != act->end(); nc++)
-				val = SetAction(&(*nc));
+			// Process non-power zones first, save/play 0x61 if requested, then commit any power blocks last
+			vector<Afx_lightblock*> powerBlocks;
+			for (auto nc = act->begin(); nc != act->end(); nc++) {
+				if (!nc->act.empty() && nc->act.front().type == AlienFX_A_Power)
+					powerBlocks.push_back(&(*nc));
+				else
+					val = SetAction(&(*nc));
+			}
+			if (save) {
+				SaveLightsState(act);
+				save = false;
+			}
+			for (auto* pblk : powerBlocks)
+				val = SetAction(pblk);
 		} break;
 		}
 		if (save) {
@@ -505,16 +596,53 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetV4Action(Afx_lightblock* act) {
+		if (!act || act->act.empty()) return false;
+		if (v4MaxZones && act->index >= v4MaxZones) return false;
 		bool res = false;
 		vector<Afx_icommand> mods;
 		PrepareAndSend(COMMV4_colorSel, { {6,{act->index}} });
 		for (auto ca = act->act.begin(); ca != act->act.end();) {
-			// 3 actions per record..
-			for (byte bPos = 3; bPos < length && ca != act->act.end(); bPos += 8) {
-				mods.push_back(
-					{bPos, {(byte)(ca->type < AlienFX_A_Breathing ? ca->type : AlienFX_A_Morph), ca->time, v4OpCodes[ca->type], 0,
-					(byte)(ca->type == AlienFX_A_Color ? 0xfa : ca->tempo), ca->r, ca->g, ca->b} });
+			// 3 actions (8 bytes each) per 34-byte record: offsets 3, 11, 19
+			byte lastMode = 0;
+			WORD lastDur = 0x07d0, lastTempo = 0x00fa;
+			for (byte bPos = 3; bPos + 7 < length && ca != act->act.end(); bPos += 8) {
+				byte mode = 0x00;
+				if (ca->type == AlienFX_A_Pulse || ca->type == AlienFX_A_Breathing)
+					mode = 0x01;
+				else if (ca->type != AlienFX_A_Color)
+					mode = 0x02;
+
+				WORD durMs = (ca->type == AlienFX_A_Color)
+					? 0x07d0
+					: (WORD)ClampInt((int)ca->time * 40, 200, 5000);
+				WORD tempoVal = (ca->type == AlienFX_A_Color)
+					? 0x00fa
+					: (WORD)ClampInt((int)ca->tempo, 12, 250);
+
+				byte r = ca->r, g = ca->g, b = ca->b;
+				if (ca->type != AlienFX_A_Power && r == 0 && g == 0 && b == 0) {
+					r = g = b = 1; // Non-zero black floor avoids AW-ELC keeping previous animations
+				}
+
+				mods.push_back({ bPos, {
+					mode,
+					(byte)(durMs >> 8), (byte)(durMs & 0xff),
+					(byte)(tempoVal >> 8), (byte)(tempoVal & 0xff),
+					r, g, b
+				} });
+				lastMode = mode;
+				lastDur = durMs;
+				lastTempo = tempoVal;
 				ca++;
+			}
+			// Single-phase non-static animation needs a dark closing phase on AW-ELC
+			if (act->act.size() == 1 && lastMode != 0x00 && mods.size() == 1 && 11 + 7 < length) {
+				mods.push_back({ 11, {
+					lastMode,
+					(byte)(lastDur >> 8), (byte)(lastDur & 0xff),
+					(byte)(lastTempo >> 8), (byte)(lastTempo & 0xff),
+					1, 1, 1
+				} });
 			}
 			res = PrepareAndSend(COMMV4_colorSet, &mods);
 		}
@@ -535,11 +663,15 @@ namespace AlienFX_SDK {
 		case API_V7:
 		{
 			mods = { {5,{v7OpCodes[act->act.front().type],bright,act->index}} };
-			for (int ca = 0; ca < act->act.size(); ca++) {
+			for (int ca = 0; ca < (int)act->act.size(); ca++) {
 				if (ca * 3 + 10 < length)
-					mods.push_back({ ca * 3 + 8, {	act->act.at(ca).r, act->act.at(ca).g, act->act.at(ca).b} });
+					mods.push_back({ ca * 3 + 8, { act->act.at(ca).r, act->act.at(ca).g, act->act.at(ca).b} });
 			}
-			return PrepareAndSend(COMMV7_control, &mods);
+			bool ok = PrepareAndSend(COMMV7_control, &mods);
+			Sleep(12);
+			PrepareAndSend(COMMV7_update, { { 8, { 0, 1 } } });
+			Sleep(8);
+			return ok;
 		}
 		case API_V6:
 			return PrepareAndSend(COMMV6_colorSet, SetMaskAndColor(&mods, act));
@@ -550,18 +682,9 @@ namespace AlienFX_SDK {
 			PrepareAndSend(COMMV5_colorSet, &mods);
 			return PrepareAndSend(COMMV5_loop);
 		case API_V4: 
-			// check types and call
-			switch (act->act.front().type) {
-			case AlienFX_A_Color: // it's a color, so set as color
-				return PrepareAndSend(COMMV4_setOneColor, { {3, {act->act.front().r,act->act.front().g,act->act.front().b, 0, 1, (byte)act->index } } });
-				break;
-			case AlienFX_A_Power: // Set power button
+			if (act->act.front().type == AlienFX_A_Power)
 				return SetPowerAction(act);
-			break;
-			default: // Set action
-				return SetV4Action(act);
-			}
-			break;
+			return SetV4Action(act);
 		case API_V3: case API_V2: {
 			// check types and call
 			if (act->act.front().type == AlienFX_A_Power) {
@@ -577,8 +700,6 @@ namespace AlienFX_SDK {
 			}
 			switch (act->act.front().type) {
 			case AlienFX_A_Color: // it's a color, so set as color
-				if (version == API_V4)
-					return PrepareAndSend(COMMV4_setOneColor, { {3, {act->act.front().r,act->act.front().g,act->act.front().b, 0, 1, (byte)act->index } } });
 				break;
 			case AlienFX_A_Power: { // Set power button
 				return SetPowerAction(act);
@@ -596,14 +717,6 @@ namespace AlienFX_SDK {
 				return res;
 			}
 			}
-			// This block for chained lights at v1-v3, off now - provide issues
-			//for (auto ca = act->act.begin(); ca != act->act.end(); ca++) {
-			//	Afx_lightblock t = { act->index, {*ca} };
-			//	if (act->act.size() > 1)
-			//		t.act.push_back(ca + 1 != act->act.end() ? *(ca + 1) : act->act.front());
-			//	DebugPrint("SDK: Set light " + to_string(act->index) + "\n");
-			//	PrepareAndSend(COMMV1_color, SetMaskAndColor(&mods, &t));
-			//}
 		}
 #ifndef NOACPILIGHTS
 		case API_ACPI:
@@ -620,11 +733,29 @@ namespace AlienFX_SDK {
 		case API_V4: {
 			PrepareAndSend(COMMV4_control, { { 4, {4,0,0x61} } });
 			PrepareAndSend(COMMV4_control, { { 4, {1,0,0x61} } });
-			for (auto ca = act->begin(); ca != act->end(); ca++)
-				if (ca->act.front().type != AlienFX_A_Power)
+			vector<byte> validIds;
+			for (auto ca = act->begin(); ca != act->end(); ca++) {
+				if (!ca->act.empty() && ca->act.front().type != AlienFX_A_Power &&
+					(!v4MaxZones || ca->index < v4MaxZones)) {
 					SetV4Action(&(*ca));
+					validIds.push_back(ca->index);
+				}
+			}
 			PrepareAndSend(COMMV4_control, { { 4, {2,0,0x61} } });
 			PrepareAndSend(COMMV4_control, { { 4, {6,0,0x61} } });
+			PrepareAndSend(COMMV4_control, { { 4, {5,0,0x61} } });
+			if (bright > 0 && !validIds.empty()) {
+				for (size_t idx = 0; idx < validIds.size(); idx += 25) {
+					size_t count = (validIds.size() - idx < 25) ? (validIds.size() - idx) : 25;
+					vector<byte> chunk(validIds.begin() + idx, validIds.begin() + idx + count);
+					vector<Afx_icommand> tmods = {
+						{ 3, { (byte)(0x64 - ClampInt(bright, 0, 100)), 0, (byte)count } },
+						{ 6, chunk }
+					};
+					PrepareAndSend(COMMV4_turnOn, &tmods);
+				}
+			}
+			Sleep(20);
 		} break;
 		case API_V3: case API_V2:
 		{
@@ -749,10 +880,11 @@ namespace AlienFX_SDK {
 			return true;
 		case API_V4: {
 			int pos = 6;
-			vector<Afx_icommand> mods;// { { 3, { (byte)(0x64 - bright), 0, (byte)mappings->size() } }/*, { 6, idlist}*/ };
+			vector<Afx_icommand> mods;
 			for (auto i = mappings->begin(); i < mappings->end(); i++) {
-				if (pos > 33) {
-					mods.push_back({ 3,{(byte)(0x64 - bright), 0, 28} });
+				if (v4MaxZones && i->lightid >= v4MaxZones) continue;
+				if (pos >= 31) {
+					mods.push_back({ 3,{(byte)(0x64 - bright), 0, (byte)(pos - 6)} });
 					PrepareAndSend(COMMV4_turnOn, &mods);
 					mods.clear();
 					pos = 6;
@@ -811,9 +943,9 @@ namespace AlienFX_SDK {
 
 	BYTE Functions::GetDeviceStatus() {
 
-		byte buffer[MAX_BUFFERSIZE];
-		//DWORD written;
-		if (devHandle)
+		byte buffer[MAX_BUFFERSIZE]{};
+		if (devHandle && version >= 0 && version <= API_V8) {
+			buffer[0] = reportIDList[version];
 			switch (version) {
 			//case API_V9:
 			//	HidD_GetInputReport(devHandle, buffer, length);
@@ -821,26 +953,27 @@ namespace AlienFX_SDK {
 			case API_V5:
 			{
 				PrepareAndSend(COMMV5_status);
+				memset(buffer, 0, sizeof(buffer));
+				buffer[0] = reportIDList[version];
 				if (HidD_GetFeature(devHandle, buffer, length))
-				//if (DeviceIoControl(devHandle, IOCTL_HID_GET_FEATURE, 0, 0, buffer, length, &written, NULL))
 					return buffer[2];
 			} break;
 			case API_V4:
 			{
 				if (HidD_GetInputReport(devHandle, buffer, length)) {
-					//if (DeviceIoControl(devHandle, IOCTL_HID_GET_INPUT_REPORT, 0, 0, buffer, length, &written, NULL))
-					//DebugPrint("Status: " + to_string(buffer[2]) + "\n");
 					return buffer[2];
 				}
 			} break;
 			case API_V3: case API_V2:
 			{
 				PrepareAndSend(COMMV1_status);
+				memset(buffer, 0, sizeof(buffer));
+				buffer[0] = reportIDList[version];
 				if (HidD_GetInputReport(devHandle, buffer, length))
-				//if (DeviceIoControl(devHandle, IOCTL_HID_GET_INPUT_REPORT, 0, 0, buffer, length, &written, NULL))
 					return buffer[0];
 			} break;
 			}
+		}
 		return 0;
 	}
 
@@ -848,14 +981,13 @@ namespace AlienFX_SDK {
 		int i = 0;
 		switch (version) {
 		case API_V3: case API_V2:
-			//if (!GetDeviceStatus())
-			//	Reset();
 			for (; i < 100 && GetDeviceStatus() != ALIENFX_V2_READY; i++) 
 				Sleep(10);
 			return i < 100;
 		case API_V4:
-			while (!IsDeviceReady()) Sleep(20);
-			return 1;
+			for (; i < 50 && !IsDeviceReady(); i++)
+				Sleep(10);
+			return i < 50;
 		default:
 			return GetDeviceStatus();
 		}

@@ -165,7 +165,8 @@ namespace AlienFX_SDK {
 			DWORD devID;
 		};
 		int version = API_UNKNOWN; // interface version, will stay at API_UNKNOWN if not initialized
-		byte bright = 64; // Last brightness set for device
+		byte bright = 100; // Last brightness set for device (0..100 scale for v4/v6/v7)
+		byte v4MaxZones = 0; // Reported hardware zone count for API_V4 (0 = unknown)
 		string description; // device description
 
 		~Functions();

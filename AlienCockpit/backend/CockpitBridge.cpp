@@ -1169,7 +1169,8 @@ static void VkToKeyXY(DWORD vk, double& nx, double& ny) {
     case VK_MENU: case VK_LMENU: nx = 4.0 / 19.0; ny = 1.0; break;
     case VK_SPACE: nx = 6.5 / 19.0; ny = 1.0; break;
     case VK_RMENU: nx = 10.5 / 19.0; ny = 1.0; break;
-    case VK_RWIN: case VK_RCONTROL: nx = 12.0 / 19.0; ny = 1.0; break;
+    case VK_RWIN: nx = 11.5 / 19.0; ny = 1.0; break;
+    case VK_RCONTROL: nx = 12.5 / 19.0; ny = 1.0; break;
     case VK_LEFT: nx = 13.5 / 19.0; ny = 1.0; break;
     case VK_DOWN: nx = 14.5 / 19.0; ny = 1.0; break;
     case VK_RIGHT: nx = 15.5 / 19.0; ny = 1.0; break;

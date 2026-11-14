@@ -153,6 +153,9 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 {
 	if (!dev || !dev->present || !dev->dev) return;
 	AlienFX_SDK::Afx_action off{ 0 };
+	if (dev->dev->version == AlienFX_SDK::API_V4) {
+		off.r = off.g = off.b = 1;
+	}
 	AlienFX_SDK::Afx_action red{ 0 };
 	red.r = 255;
 
@@ -169,6 +172,7 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 	}
 	if (oldtest >= 0 && oldtest != id) {
 		dev->dev->SetColor((byte)oldtest, off);
+		dev->dev->UpdateColors();
 	}
 	if (id >= 0) {
 		// Ensure API_V4 unmapped channels are energized too
@@ -178,10 +182,10 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 		}
 		dev->dev->SetColor((byte)id, red);
 		oldtest = id;
+		dev->dev->UpdateColors();
 	} else {
 		oldtest = -1;
 	}
-	dev->dev->UpdateColors();
 }
 
 bool FXHelper::CheckEvent(LightEventData* eData, event* e) {
@@ -281,21 +285,31 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 		}
 		LightQueryElement newBlock{ (byte)HIWORD(lgh), 
 			(byte)(isPowerLight ? 4 : 0), (byte)actions->size() };
+		if (newBlock.actsize > 9) newBlock.actsize = 9;
 		memcpy(newBlock.actions, actions->data(), newBlock.actsize * sizeof(AlienFX_SDK::Afx_action));
+		if (!isPowerLight && dev->dev && dev->dev->version == AlienFX_SDK::API_V7 && newBlock.actsize > 2) {
+			newBlock.actsize = 2;
+		}
 		for (int i = 0; i < newBlock.actsize; i++) {
 			AlienFX_SDK::Afx_action* action = &newBlock.actions[i];
 			ChangeAccent(action);
 			if (!isPowerLight && dev->dev &&
 				dev->dev->version != AlienFX_SDK::API_V5 && dev->dev->version != AlienFX_SDK::API_ACPI &&
 				action->type != AlienFX_SDK::AlienFX_A_Color) {
-				// Convert custom software effects (e.g. Summer = 7) safely to static color on hardware controllers
-				if (action->type > AlienFX_SDK::AlienFX_A_Power) {
-					action->type = AlienFX_SDK::AlienFX_A_Color;
-				}
-				// Convert Aurora 3-color Rainbow placeholder into smooth multi-phase hardware Morph on V4 chassis controllers
-				if (dev->dev->version == AlienFX_SDK::API_V4 && newBlock.actsize >= 3 &&
-					action->type == AlienFX_SDK::AlienFX_A_Rainbow) {
-					action->type = AlienFX_SDK::AlienFX_A_Morph;
+				if (dev->dev->version == AlienFX_SDK::API_V7) {
+					if (action->type != AlienFX_SDK::AlienFX_A_Breathing) {
+						action->type = (newBlock.actsize >= 2) ? AlienFX_SDK::AlienFX_A_Breathing : AlienFX_SDK::AlienFX_A_Color;
+					}
+				} else {
+					// Convert custom software effects (e.g. Summer = 7) safely to static color on hardware controllers
+					if (action->type > AlienFX_SDK::AlienFX_A_Power) {
+						action->type = AlienFX_SDK::AlienFX_A_Color;
+					}
+					// Convert Aurora 3-color Rainbow placeholder into smooth multi-phase hardware Morph on V4 chassis controllers
+					if (dev->dev->version == AlienFX_SDK::API_V4 && newBlock.actsize >= 3 &&
+						action->type == AlienFX_SDK::AlienFX_A_Rainbow) {
+						action->type = AlienFX_SDK::AlienFX_A_Morph;
+					}
 				}
 				// UI speed is 1 (slowest) .. 100 (fastest); legacy V2/V3/V4/V6 hardware tempo is inverse delay (higher = slower)
 				if (action->type != AlienFX_SDK::AlienFX_A_Color &&

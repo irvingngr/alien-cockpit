@@ -345,9 +345,9 @@ static void EnsureDefaultDeviceMappings() {
                 } else if (isMouseDevice) {
                     struct MouseZoneDef { byte id; const char* name; };
                     static const MouseZoneDef kMouseZones[] = {
-                        { 0, "Side Strips & Wheel" },
-                        { 1, "Mouse Logo" },
-                        { 2, "DPI Indicator" }
+                        { 1, "Side Strips & Wheel" },
+                        { 2, "Mouse Logo" },
+                        { 3, "DPI Indicator" }
                     };
                     for (const auto& mz : kMouseZones) {
                         AlienFX_SDK::Afx_light l{};
@@ -358,7 +358,9 @@ static void EnsureDefaultDeviceMappings() {
                     }
                     anyAdded = true;
                 } else {
-                    for (byte i = 0; i < 16; ++i) {
+                    byte fallbackCount = (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0)
+                        ? dev.dev->v4MaxZones : 16;
+                    for (byte i = 0; i < fallbackCount; ++i) {
                         AlienFX_SDK::Afx_light l{};
                         l.lightid = i;
                         l.flags = 0;
@@ -370,22 +372,39 @@ static void EnsureDefaultDeviceMappings() {
             }
         }
 
-        // Upgrade legacy 2-zone AW610M CSV entry ("Mouse Light" + "Mouse Logo") to full 3-zone layout
-        if (isMouseDevice && dev.lights.size() == 2) {
-            bool hasLegacy0 = std::any_of(dev.lights.begin(), dev.lights.end(),
-                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 0 && l.name == "Mouse Light"; });
-            bool hasDpi2 = std::any_of(dev.lights.begin(), dev.lights.end(),
-                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 2; });
-            if (hasLegacy0 && !hasDpi2) {
-                for (auto& l : dev.lights) {
-                    if (l.lightid == 0) l.name = "Side Strips & Wheel";
+        // Migrate legacy 0-based AW610M zones (0..2) to 1-based hardware zone IDs (1..3)
+        if (isMouseDevice) {
+            bool hasZeroId = std::any_of(dev.lights.begin(), dev.lights.end(),
+                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 0; });
+            bool hasZone3 = std::any_of(dev.lights.begin(), dev.lights.end(),
+                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 3; });
+            if (hasZeroId && !hasZone3) {
+                dev.lights.clear();
+                dev.lights.push_back({ 1, { 0, 0 }, "Side Strips & Wheel" });
+                dev.lights.push_back({ 2, { 0, 0 }, "Mouse Logo" });
+                dev.lights.push_back({ 3, { 0, 0 }, "DPI Indicator" });
+                if (auto* groupsVec = conf->afx_dev.GetGroups()) {
+                    for (auto& g : *groupsVec) {
+                        for (auto& gl : g.lights) {
+                            if (gl.did == dev.pid && gl.lid <= 2) {
+                                gl.lid = static_cast<WORD>(gl.lid + 1);
+                            }
+                        }
+                    }
                 }
-                AlienFX_SDK::Afx_light dpi{};
-                dpi.lightid = 2;
-                dpi.flags = 0;
-                dpi.name = "DPI Indicator";
-                dev.lights.push_back(dpi);
                 anyAdded = true;
+            }
+        }
+
+        // Trim out-of-range auto-generated V4 chassis zones so AW-ELC FINISH_PLAY won't reject valid zones
+        if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0) {
+            for (auto lit = dev.lights.begin(); lit != dev.lights.end(); ) {
+                if (lit->lightid >= dev.dev->v4MaxZones && lit->name.rfind("LED Zone ", 0) == 0) {
+                    lit = dev.lights.erase(lit);
+                    anyAdded = true;
+                } else {
+                    ++lit;
+                }
             }
         }
 

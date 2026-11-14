@@ -138,9 +138,10 @@ const KEYBOARD_ROWS = [
     { id: 'fn', label: 'FN', lids: [101], vk: 255, aliases: ['fn'], group: 'mods' },
     { id: 'lwin', label: 'WIN', lids: [102, 103], vk: 347, aliases: ['left windows', 'left windows 2', 'win'], group: 'mods' },
     { id: 'lalt', label: 'ALT', lids: [104], vk: 164, aliases: ['alt', 'lalt', 'left alt'], group: 'mods' },
-    { id: 'space', label: 'SPACE', cls: 'w-55', lids: [106, 107, 105, 108], vk: 32, aliases: ['space', 'space 2', 'space 3', 'space 4'] },
+    { id: 'space', label: 'SPACE', cls: 'w-45', lids: [106, 107, 105, 108], vk: 32, aliases: ['space', 'space 2', 'space 3', 'space 4'] },
     { id: 'ralt', label: 'RALT', lids: [111], vk: 421, aliases: ['right alt', 'ralt'], group: 'mods' },
-    { id: 'copilot', label: 'CP', cls: 'w-125', lids: [109, 112], vk: 348, aliases: ['right windows', 'right ctrl', 'rctrl', 'copilot', 'win lock', 'menu'], group: 'mods' },
+    { id: 'rwin', label: 'WIN', lids: [109], vk: 348, aliases: ['right windows', 'rwin'], name: 'Right Windows', group: 'mods' },
+    { id: 'copilot', label: 'CP', cls: 'w-125', lids: [112], vk: 419, aliases: ['right ctrl', 'rctrl', 'copilot', 'win lock', 'menu'], name: 'Copilot / RCtrl', group: 'mods' },
     { id: 'left', label: '◀', lids: [133], vk: 293, aliases: ['left'], group: 'arrows' },
     { id: 'down', label: '▼', lids: [134], vk: 296, aliases: ['down'], group: 'arrows' },
     { id: 'right', label: '▶', lids: [135], vk: 295, aliases: ['right'], group: 'arrows' }
@@ -560,6 +561,8 @@ function initNavigation() {
         state.selectedDevicePid = viewDev.pid;
         const dd = document.getElementById('hw-device-dropdown');
         if (dd) dd.value = String(viewDev.pid);
+        const pdd = document.getElementById('probe-dev-select');
+        if (pdd) pdd.value = String(viewDev.pid);
         renderHardwareLights();
       }
       if (state.activeView === 'mouse') {
@@ -576,12 +579,27 @@ function initNavigation() {
       updateProbeDeckUI();
       syncVirtualLightingFromState();
       syncInspectorFromView();
+      syncLightingControlsForView();
     });
   });
 
   const btnStartVisualProbe = document.getElementById('btn-start-visual-probe');
   if (btnStartVisualProbe) {
     btnStartVisualProbe.addEventListener('click', () => {
+      if (state.selectedTargets.has('touchpad')) {
+        const chassisDev = state.devices.find((d) => d.present && isChassisDevice(d)) ||
+          state.devices.find((d) => isChassisDevice(d));
+        if (chassisDev && chassisDev.pid !== state.selectedDevicePid) {
+          state.selectedDevicePid = chassisDev.pid;
+          const dd = document.getElementById('hw-device-dropdown');
+          if (dd) dd.value = String(chassisDev.pid);
+          const pdd = document.getElementById('probe-dev-select');
+          if (pdd) pdd.value = String(chassisDev.pid);
+          renderHardwareLights();
+          refreshSelectionUI();
+          updateProbeDeckUI();
+        }
+      }
       setProbeActive(true);
     });
   }
@@ -657,6 +675,25 @@ function sendPowerButtonColor(colorHex) {
   return true;
 }
 
+function syncLightingControlsForView() {
+  const isMouse = state.activeView === 'mouse';
+  document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
+    const allowed = !isMouse || b.dataset.eff === 'static' || b.dataset.eff === 'breathing';
+    b.style.display = allowed ? '' : 'none';
+  });
+  if (isMouse && state.effect !== 'static' && state.effect !== 'breathing') {
+    state.effect = 'static';
+  }
+  document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.eff === state.effect);
+  });
+  const showSec = isMouse || ['morph', 'aurora', 'breathing'].includes(state.effect);
+  const secWrap = document.getElementById('secondary-color-wrap');
+  if (secWrap) secWrap.style.display = showSec ? 'flex' : 'none';
+  const auroraWrap = document.getElementById('aurora-palette-wrap');
+  if (auroraWrap) auroraWrap.style.display = (!isMouse && state.effect === 'aurora') ? 'flex' : 'none';
+}
+
 function initLightingControls() {
   const cPrimary = document.getElementById('color-primary');
   const hPrimary = document.getElementById('hex-primary');
@@ -697,18 +734,16 @@ function initLightingControls() {
 
   document.querySelectorAll('.eff-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.eff-btn').forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
+      if (state.activeView === 'mouse' && btn.dataset.eff !== 'static' && btn.dataset.eff !== 'breathing') {
+        return;
+      }
       state.effect = btn.dataset.eff;
       if (state.effect === 'summer') {
         state.colorPrimary = '#38bdf8';
         cPrimary.value = '#38bdf8';
         hPrimary.value = '#38BDF8';
       }
-      const showSec = ['morph', 'aurora'].includes(state.effect);
-      document.getElementById('secondary-color-wrap').style.display = showSec ? 'flex' : 'none';
-      const auroraWrap = document.getElementById('aurora-palette-wrap');
-      if (auroraWrap) auroraWrap.style.display = state.effect === 'aurora' ? 'flex' : 'none';
+      syncLightingControlsForView();
     });
   });
 
@@ -1375,11 +1410,7 @@ function syncInspectorFromView() {
   document.getElementById('hex-primary').value = col1.toUpperCase();
   document.getElementById('color-secondary').value = col2;
   document.getElementById('effect-speed').value = spd;
-  document.querySelectorAll('.eff-btn').forEach((b) => b.classList.toggle('active', b.dataset.eff === eff));
-  const showSec = ['morph', 'aurora'].includes(eff);
-  document.getElementById('secondary-color-wrap').style.display = showSec ? 'flex' : 'none';
-  const auroraWrap = document.getElementById('aurora-palette-wrap');
-  if (auroraWrap) auroraWrap.style.display = eff === 'aurora' ? 'flex' : 'none';
+  syncLightingControlsForView();
 }
 
 function syncVirtualLightingFromState() {
@@ -1507,7 +1538,7 @@ function updateProbeDeckUI() {
   const deck = document.getElementById('led-probe-deck');
   const toggle = document.getElementById('probe-toggle');
   const stateTxt = document.getElementById('probe-state-text');
-  const devLbl = document.getElementById('probe-dev-label');
+  const devSel = document.getElementById('probe-dev-select');
   const codeLbl = document.getElementById('probe-code-label');
   const mapLbl = document.getElementById('probe-mapped-label');
   const prevBtn = document.getElementById('probe-prev');
@@ -1524,7 +1555,7 @@ function updateProbeDeckUI() {
   deck.classList.toggle('probing', state.probeActive);
   if (toggle) toggle.checked = state.probeActive;
   if (stateTxt) stateTxt.textContent = state.probeActive ? 'LED PROBE ACTIVE' : 'LED PROBE INACTIVE';
-  if (devLbl) devLbl.textContent = dev ? `Device: ${dev.name}` : 'Device: —';
+  if (devSel && dev) devSel.value = String(dev.pid);
   if (codeLbl) codeLbl.textContent = `LED #${state.probeLedId}`;
   if (mapLbl) {
     if (state.probeActive) {
@@ -1562,6 +1593,7 @@ function setProbeActive(active) {
 
 function initLedProbeDeck() {
   const toggle = document.getElementById('probe-toggle');
+  const devSel = document.getElementById('probe-dev-select');
   const prevBtn = document.getElementById('probe-prev');
   const nextBtn = document.getElementById('probe-next');
   const addBtn = document.getElementById('probe-add');
@@ -1572,6 +1604,21 @@ function initLedProbeDeck() {
   if (toggle) {
     toggle.addEventListener('change', (e) => {
       setProbeActive(e.target.checked);
+    });
+  }
+  if (devSel) {
+    devSel.addEventListener('change', (e) => {
+      const nextPid = parseInt(e.target.value, 10);
+      if (Number.isNaN(nextPid)) return;
+      state.selectedDevicePid = nextPid;
+      state.selectedHwLights.clear();
+      const dd = document.getElementById('hw-device-dropdown');
+      if (dd) dd.value = String(nextPid);
+      renderHardwareLights();
+      refreshSelectionUI();
+      updateProbeDeckUI();
+      syncVirtualLightingFromState();
+      if (state.probeActive) sendProbeLed();
     });
   }
   if (prevBtn) {
@@ -1651,20 +1698,29 @@ function applyFullState(data) {
   updateCurvePresetBadge();
 
   const dd = document.getElementById('hw-device-dropdown');
+  const pdd = document.getElementById('probe-dev-select');
   const hasSelected = state.devices.some((d) => d.pid === state.selectedDevicePid);
   if (!hasSelected) {
     const viewDev = getTargetDeviceForView(state.activeView);
     state.selectedDevicePid = viewDev ? viewDev.pid : (state.devices.length > 0 ? state.devices[0].pid : 0);
   }
   dd.innerHTML = '';
+  if (pdd) pdd.innerHTML = '';
   state.devices.forEach((d) => {
     const opt = document.createElement('option');
     opt.value = d.pid;
     opt.textContent = d.name;
     dd.appendChild(opt);
+    if (pdd) {
+      const popt = document.createElement('option');
+      popt.value = d.pid;
+      popt.textContent = d.name;
+      pdd.appendChild(popt);
+    }
   });
   if (state.selectedDevicePid) {
     dd.value = String(state.selectedDevicePid);
+    if (pdd) pdd.value = String(state.selectedDevicePid);
   }
   renderHardwareLights();
   updateProbeDeckUI();
@@ -1704,6 +1760,7 @@ function applyFullState(data) {
   if (activePreset) {
     document.getElementById('hud-profile').textContent = `Preset: ${activePreset}`;
   }
+  syncLightingControlsForView();
 }
 
 function renderHardwareLights() {
@@ -1776,6 +1833,8 @@ function initWindowControls() {
 function initMiscActions() {
   document.getElementById('hw-device-dropdown').addEventListener('change', (e) => {
     state.selectedDevicePid = parseInt(e.target.value, 10);
+    const pdd = document.getElementById('probe-dev-select');
+    if (pdd) pdd.value = String(state.selectedDevicePid);
     state.selectedHwLights.clear();
     renderHardwareLights();
     refreshSelectionUI();
@@ -1882,11 +1941,7 @@ function initMiscActions() {
       document.getElementById('hex-primary').value = p.color.toUpperCase();
       document.getElementById('color-secondary').value = p.color2;
       document.getElementById('effect-speed').value = p.speed;
-      document.querySelectorAll('.eff-btn').forEach((b) => b.classList.toggle('active', b.dataset.eff === p.effect));
-      const auroraWrap = document.getElementById('aurora-palette-wrap');
-      if (auroraWrap) auroraWrap.style.display = p.effect === 'aurora' ? 'flex' : 'none';
-      const showSec = ['morph', 'aurora'].includes(p.effect);
-      document.getElementById('secondary-color-wrap').style.display = showSec ? 'flex' : 'none';
+      syncLightingControlsForView();
 
       sendCommand({
         cmd: 'applyGamePreset',
@@ -1955,6 +2010,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initWindowControls();
   initMiscActions();
   renderFanCurve();
+  syncLightingControlsForView();
 
   if (hasWebView) {
     sendCommand({ cmd: 'getState' });
