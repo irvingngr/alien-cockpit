@@ -2,6 +2,7 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <shlwapi.h>
 #include <wrl.h>
 #include <WebView2.h>
@@ -53,6 +54,8 @@ static ComPtr<ICoreWebView2> g_webview;
 static NOTIFYICONDATAW g_nid{};
 static bool g_trayAdded = false;
 static const UINT_PTR TIMER_TELEMETRY = 1;
+static std::vector<BatteryDeviceInfo> g_cachedBatteries;
+static ULONGLONG g_lastBatteryScanTick = 0;
 
 static std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -77,7 +80,17 @@ static std::wstring GetExeDirectory() {
     return std::wstring(path);
 }
 
-static void UpdateTrayIconAndTooltip() {
+static std::wstring GetWebViewUserDataFolder() {
+    wchar_t appData[MAX_PATH]{};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData)) && appData[0] != L'\0') {
+        std::wstring folder = std::wstring(appData) + L"\\AlienCockpit\\WebView2Data";
+        SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
+        return folder;
+    }
+    return GetExeDirectory() + L"\\WebView2Data";
+}
+
+static void UpdateTrayIconAndTooltip(bool forceScan = false) {
     if (!g_trayAdded || !conf) return;
     UINT iconRes = conf->lightsOn ? (conf->stateDimmed ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON) : IDI_ALIENFX_OFF;
     g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
@@ -85,8 +98,13 @@ static void UpdateTrayIconAndTooltip() {
     std::wstring tip = L"AlienCockpit | Lights: ";
     tip += (conf->lightsOn ? L"ON" : L"OFF");
 
-    auto batts = BatteryMonitor::GetAllBatteries();
-    for (const auto& b : batts) {
+    ULONGLONG now = GetTickCount64();
+    if (forceScan || g_lastBatteryScanTick == 0 || (now - g_lastBatteryScanTick) >= 6000) {
+        g_cachedBatteries = BatteryMonitor::GetAllBatteries();
+        g_lastBatteryScanTick = now;
+    }
+
+    for (const auto& b : g_cachedBatteries) {
         std::wstring part;
         if (b.type == "system") {
             part = L" | Laptop: " + std::to_wstring(b.percentage) + L"%";
@@ -227,15 +245,21 @@ static void PostJsonToUI(const std::string& json) {
 }
 
 static void InitWebView(HWND hwnd) {
-    std::wstring userDataFolder = GetExeDirectory() + L"\\WebView2Data";
-    CreateCoreWebView2EnvironmentWithOptions(nullptr, userDataFolder.c_str(), nullptr,
+    std::wstring userDataFolder = GetWebViewUserDataFolder();
+    HRESULT hrEnv = CreateCoreWebView2EnvironmentWithOptions(nullptr, userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [hwnd](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
-                if (FAILED(result) || !env) return result;
+                if (FAILED(result) || !env) {
+                    MessageBoxW(hwnd, L"Failed to initialize Microsoft Edge WebView2 Runtime.\nPlease ensure WebView2 Runtime is installed.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+                    return result;
+                }
                 env->CreateCoreWebView2Controller(hwnd,
                     Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                         [hwnd](HRESULT res, ICoreWebView2Controller* controller) -> HRESULT {
-                            if (FAILED(res) || !controller) return res;
+                            if (FAILED(res) || !controller) {
+                                MessageBoxW(hwnd, L"Failed to create WebView2 controller.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+                                return res;
+                            }
                             g_webviewController = controller;
                             g_webviewController->get_CoreWebView2(&g_webview);
 
@@ -290,7 +314,25 @@ static void InitWebView(HWND hwnd) {
                                                 PostMessageW(hwnd, WM_CLOSE, 0, 0);
                                                 return S_OK;
                                             }
+                                            if (jsonStr.find("\"restartAsAdmin\"") != std::string::npos) {
+                                                wchar_t exePath[MAX_PATH]{};
+                                                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+                                                SHELLEXECUTEINFOW sei{};
+                                                sei.cbSize = sizeof(sei);
+                                                sei.lpVerb = L"runas";
+                                                sei.lpFile = exePath;
+                                                sei.nShow = SW_SHOWNORMAL;
+                                                if (ShellExecuteExW(&sei)) {
+                                                    DestroyWindow(hwnd);
+                                                }
+                                                return S_OK;
+                                            }
                                             std::string resp = CockpitBridge::HandleMessage(jsonStr);
+                                            if (jsonStr.find("\"toggleLights\"") != std::string::npos ||
+                                                jsonStr.find("\"activateProfile\"") != std::string::npos ||
+                                                jsonStr.find("\"setBrightness\"") != std::string::npos) {
+                                                UpdateTrayIconAndTooltip(false);
+                                            }
                                             PostJsonToUI(resp);
                                         }
                                         return S_OK;
@@ -301,6 +343,9 @@ static void InitWebView(HWND hwnd) {
                         }).Get());
                 return S_OK;
             }).Get());
+    if (FAILED(hrEnv)) {
+        MessageBoxW(hwnd, L"Could not start WebView2 Environment. Please install the Microsoft Edge WebView2 Runtime.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+    }
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -393,7 +438,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     PostJsonToUI(CockpitBridge::BuildFullStateJson());
                 }
             }
-            UpdateTrayIconAndTooltip();
+            UpdateTrayIconAndTooltip(true);
         }
         break;
 
@@ -416,7 +461,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 fxhl->ClearAndRefresh(true);
             }
             conf->Save();
-            UpdateTrayIconAndTooltip();
+            UpdateTrayIconAndTooltip(false);
             PostJsonToUI(CockpitBridge::BuildFullStateJson());
         } else if (id == IDM_TRAY_EXIT) {
             DestroyWindow(hwnd);
@@ -424,7 +469,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             size_t idx = id - IDM_TRAY_PROF_BASE;
             if (idx < conf->profiles.size()) {
                 eve->SwitchActiveProfile(conf->profiles[idx], true);
-                UpdateTrayIconAndTooltip();
+                UpdateTrayIconAndTooltip(false);
                 PostJsonToUI(CockpitBridge::BuildFullStateJson());
             }
         }
@@ -515,10 +560,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     InitWebView(hwnd);
     SetTimer(hwnd, TIMER_TELEMETRY, 1500, nullptr);
 
-    bool startMin = (lpCmdLine && wcsstr(lpCmdLine, L"--minimized") != nullptr) || (conf->startMinimized != 0);
+    bool startMin = (lpCmdLine && wcsstr(lpCmdLine, L"--minimized") != nullptr);
     if (!startMin) {
-        ShowWindow(hwnd, nCmdShow);
+        ShowWindow(hwnd, nCmdShow ? nCmdShow : SW_SHOWNORMAL);
         UpdateWindow(hwnd);
+        SetForegroundWindow(hwnd);
     }
 
     MSG msg{};

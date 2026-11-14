@@ -20,7 +20,7 @@ MonHelper::MonHelper() {
 	acpi = new AlienFan_SDK::Control();
 	IIDFromString(L"{be337238-0d82-4146-a960-4f3749d470c7}", &perfset);
 	if (acpi->Probe(fan_conf->diskSensors)) {
-		fan_conf->lastSelectedSensor = acpi->sensors.front().sid;
+		fan_conf->lastSelectedSensor = acpi->sensors.empty() ? 0 : acpi->sensors.front().sid;
 		fansize = (WORD)acpi->fans.size();
 		powerSize = (WORD)acpi->powers.size();
 		sensorSize = (WORD)acpi->sensors.size();
@@ -36,6 +36,7 @@ MonHelper::~MonHelper() {
 
 void MonHelper::SetOC()
 {
+	if (!acpi || !acpi->isSupported) return;
 	if (fan_conf->ocEnable) {
 		acpi->SetTCC(fan_conf->lastProf->currentTCC);
 		acpi->SetXMP(fan_conf->lastProf->memoryXMP);
@@ -44,6 +45,7 @@ void MonHelper::SetOC()
 
 void MonHelper::ResetBoost() {
 	lastBoost.clear();
+	if (!acpi || !acpi->isSupported) return;
 	if (!powerMode) {
 		DebugPrint("Mon: Boost reset\n");
 		for (int i = 0; i < fansize; i++) {
@@ -53,6 +55,7 @@ void MonHelper::ResetBoost() {
 }
 
 void MonHelper::Run() {
+	if (!acpi || !acpi->isSupported) return;
 	if (!powerMode && !monThread) {
 		monThread = new ThreadHelper(CMonProc, this, fan_conf->pollingRate, THREAD_PRIORITY_NORMAL/*THREAD_PRIORITY_BELOW_NORMAL*/);
 		DebugPrint("Mon thread start.\n");
@@ -78,6 +81,7 @@ void MonHelper::ToggleMode() {
 }
 
 void MonHelper::Start() {
+	if (!acpi || !acpi->isSupported) return;
 	SetOC();
 	SetCurrentMode();
 	// start thread...
@@ -87,12 +91,13 @@ void MonHelper::Start() {
 
 void MonHelper::Stop() {
 	Finish();
-	if (fan_conf->keepSystem)
+	if (acpi && acpi->isSupported && fan_conf->keepSystem)
 		SetCurrentMode(oldPower);
 	stopped = true;
 }
 
 void MonHelper::SetCurrentMode(int newMode) {
+	if (!acpi || !acpi->isSupported || powerSize == 0) return;
 	if (newMode < 0) {
 		//DebugPrint("Mon: Switching from profile\n");
 		newMode = fan_conf->lastProf->gmodeStage ? powerSize :
@@ -134,6 +139,7 @@ byte MonHelper::GetFanPercent(byte fanID)
 }
 
 int MonHelper::GetPowerMode() {
+	if (!acpi || !acpi->isSupported) return 0;
 #ifdef _DEBUG
 	int res = acpi->GetGMode() ? powerSize : acpi->GetPower();
 	//DebugPrint("Mon: BIOS mode " + to_string(res) + ", current " + to_string(powerMode) + "\n");
@@ -144,6 +150,7 @@ int MonHelper::GetPowerMode() {
 }
 
 void MonHelper::SetPowerMode(byte newMode) {
+	if (!acpi || !acpi->isSupported || powerSize == 0) return;
 	if (newMode < powerSize)
 		if (fan_conf->acPower)
 			fan_conf->lastProf->powerStage = newMode;
@@ -154,11 +161,13 @@ void MonHelper::SetPowerMode(byte newMode) {
 }
 
 void MonHelper::SetCpuModes() {
-	PowerGetActiveScheme(NULL, &sch_guid);
-	PowerWriteACValueIndex(NULL, sch_guid, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &perfset, fan_conf->lastProf->acMode);
-	PowerWriteDCValueIndex(NULL, sch_guid, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &perfset, fan_conf->lastProf->dcMode);
-	PowerSetActiveScheme(NULL, sch_guid);
-	LocalFree(sch_guid);
+	if (PowerGetActiveScheme(NULL, &sch_guid) == ERROR_SUCCESS && sch_guid) {
+		PowerWriteACValueIndex(NULL, sch_guid, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &perfset, fan_conf->lastProf->acMode);
+		PowerWriteDCValueIndex(NULL, sch_guid, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &perfset, fan_conf->lastProf->dcMode);
+		PowerSetActiveScheme(NULL, sch_guid);
+		LocalFree(sch_guid);
+		sch_guid = NULL;
+	}
 }
 
 // I need this wrapper for buggy G-series BIOS which return error from time to time
@@ -168,11 +177,12 @@ int MonHelper::GetFanRPM(int fanID) {
 }
 
 WORD MonHelper::GetSensorData(bool forced) {
+	if (!acpi || !acpi->isSupported) return 0;
 	// update values:
 	if (forced || !monThread) {
 		// temps..
 #ifndef FANV1
-		acpi->m_Refresher->Refresh(0);
+		if (acpi->m_Refresher) acpi->m_Refresher->Refresh(0);
 #endif
 		modified = false;
 		for (int i = 0; i < sensorSize; i++) {

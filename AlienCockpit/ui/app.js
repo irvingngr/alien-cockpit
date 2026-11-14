@@ -133,6 +133,48 @@ function buildKeyboard() {
   });
 }
 
+const NUMPAD_KEYS = [
+  { id: 69, label: 'NUM' }, { id: 181, label: '/' }, { id: 55, label: '*' }, { id: 74, label: '-' },
+  { id: 71, label: '7' }, { id: 172, label: '8' }, { id: 73, label: '9' }, { id: 78, label: '+', cls: 'num-tall' },
+  { id: 175, label: '4' }, { id: 76, label: '5' }, { id: 177, label: '6' },
+  { id: 79, label: '1' }, { id: 180, label: '2' }, { id: 81, label: '3' }, { id: 184, label: 'ENT', cls: 'num-tall' },
+  { id: 82, label: '0', cls: 'num-wide' }, { id: 183, label: '.' }
+];
+
+function buildNumpad() {
+  const container = document.getElementById('kbd-numpad');
+  if (!container) return;
+  container.innerHTML = '';
+
+  NUMPAD_KEYS.forEach((key) => {
+    const btn = document.createElement('div');
+    btn.className = `keycap ${key.cls || ''}`;
+    btn.textContent = key.label;
+    btn.dataset.id = key.id;
+    btn.dataset.name = `Num ${key.label}`;
+    btn.dataset.group = 'numpad';
+
+    const color = state.keyColors[key.id] || '#00f0ff';
+    btn.style.boxShadow = `inset 0 -3px 0 ${color}, 0 0 8px ${color}33`;
+
+    btn.addEventListener('mousedown', (e) => {
+      state.isDraggingSelect = true;
+      state.selectedHwLights.clear();
+      if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
+      toggleTargetSelection(key.id);
+    });
+
+    btn.addEventListener('mouseenter', () => {
+      if (state.isDraggingSelect) {
+        state.selectedTargets.add(String(key.id));
+        refreshSelectionUI();
+      }
+    });
+
+    container.appendChild(btn);
+  });
+}
+
 function toggleTargetSelection(id) {
   const key = String(id);
   if (state.selectedTargets.has(key)) state.selectedTargets.delete(key);
@@ -144,15 +186,20 @@ function refreshSelectionUI() {
   document.querySelectorAll('.keycap').forEach((el) => {
     el.classList.toggle('selected', state.selectedTargets.has(el.dataset.id));
   });
-  document.querySelectorAll('.mouse-zone, .chassis-zone').forEach((el) => {
+  document.querySelectorAll('.mouse-zone, .chassis-zone, .touchpad-zone').forEach((el) => {
     el.classList.toggle('selected', state.selectedTargets.has(el.dataset.zoneId));
   });
+  document.querySelectorAll('.hw-light-item').forEach((el) => {
+    el.classList.toggle('selected', state.selectedHwLights.has(parseInt(el.dataset.lid, 10)));
+  });
 
-  const count = state.selectedTargets.size;
+  const count = state.selectedTargets.size + state.selectedHwLights.size;
   document.getElementById('selected-count').textContent = `${count} selected`;
   const preview = document.getElementById('selected-names');
   if (count === 0) {
     preview.textContent = 'Click keys or zones on the left';
+  } else if (state.selectedHwLights.size > 0) {
+    preview.textContent = `Hardware LEDs: ${Array.from(state.selectedHwLights).slice(0, 8).map((id) => `#${id}`).join(', ')}${state.selectedHwLights.size > 8 ? '…' : ''}`;
   } else {
     preview.textContent = `Targets: ${Array.from(state.selectedTargets).slice(0, 8).join(', ')}${count > 8 ? '…' : ''}`;
   }
@@ -371,11 +418,13 @@ function updateLightsButton() {
   const btn = document.getElementById('btn-master-lights');
   btn.classList.toggle('active', state.settings.lightsOn);
   btn.innerHTML = `<span class="dot"></span> ${state.settings.lightsOn ? 'LIGHTS ON' : 'LIGHTS OFF'}`;
-  const canvas = document.querySelector('.device-canvas-area');
+  const canvas = document.querySelector('.visual-stage');
   if (canvas) {
     canvas.style.opacity = state.settings.lightsOn ? '1' : '0.45';
   }
 }
+
+window.restartAsAdmin = () => sendCommand({ cmd: 'restartAsAdmin' });
 
 function renderFanCurve() {
   const svg = document.getElementById('fan-curve-svg');
@@ -475,7 +524,10 @@ function applyTelemetry(data) {
     sList.innerHTML = '';
     const sensors = data.thermals.sensors || [];
     if (sensors.length === 0) {
-      sList.innerHTML = '<div class="hint-text">No ACPI thermal sensors detected (try running as Administrator).</div>';
+      sList.innerHTML = `
+        <div class="hint-text">No ACPI thermal sensors detected.</div>
+        ${data.thermals.available === false ? '<button class="btn-secondary" style="margin-top:8px" onclick="restartAsAdmin()">Enable ACPI Control (Run as Admin)</button>' : ''}
+      `;
     } else {
       sensors.forEach((s) => {
         const row = document.createElement('div');

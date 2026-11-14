@@ -130,14 +130,26 @@ std::string CockpitBridge::BuildTelemetryJson() {
 
     // Fans & Sensors
     SimpleJson::Value fanData = SimpleJson::Value::Object();
-    fanData["available"] = (mon != nullptr && mon->acpi != nullptr && (mon->fansize > 0 || mon->sensorSize > 0 || mon->powerSize > 0));
+    bool acpiReady = (mon != nullptr && mon->acpi != nullptr && mon->acpi->isSupported);
+    fanData["available"] = (acpiReady && (mon->fansize > 0 || mon->sensorSize > 0 || mon->powerSize > 0));
     if (mon) {
+        if (acpiReady && mon->senValues.empty()) {
+            mon->GetSensorData(true);
+        }
         fanData["powerMode"] = static_cast<int>(mon->powerMode);
         SimpleJson::Value sensors = SimpleJson::Value::Array();
         for (const auto& kv : mon->senValues) {
             SimpleJson::Value s = SimpleJson::Value::Object();
             s["id"] = static_cast<int>(kv.first);
-            std::string sname = (fan_conf && fan_conf->sensors.count(kv.first)) ? fan_conf->sensors[kv.first] : ("Sensor " + std::to_string(kv.first));
+            std::string sname;
+            if (fan_conf && fan_conf->sensors.count(kv.first)) {
+                sname = fan_conf->sensors[kv.first];
+            } else if (mon->acpi) {
+                for (const auto& asen : mon->acpi->sensors) {
+                    if (asen.sid == kv.first && !asen.name.empty()) { sname = asen.name; break; }
+                }
+            }
+            if (sname.empty()) sname = "Sensor " + std::to_string(kv.first);
             s["name"] = sname;
             s["temp"] = static_cast<int>(kv.second);
             s["maxTemp"] = mon->maxTemps.count(kv.first) ? static_cast<int>(mon->maxTemps[kv.first]) : static_cast<int>(kv.second);

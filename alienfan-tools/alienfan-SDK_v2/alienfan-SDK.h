@@ -41,7 +41,8 @@ namespace AlienFan_SDK {
 
 	class Control {
 	private:
-		byte sysType;
+		byte sysType = 0;
+		bool comNeedUninit = false;
 		//IWbemHiPerfEnum* m_esifInst, * m_ssdInsts, * m_ohmInsts;
 		IWbemConfigureRefresher* m_pConfig = NULL;
 		void EnumSensors(IWbemServices* srv, const wchar_t* sname, const LPCWSTR valuePath, string name, byte type);
@@ -50,7 +51,7 @@ namespace AlienFan_SDK {
 		VARIANT m_instancePath{};
 		IWbemServices* m_WbemServices = NULL, * m_OHMService = NULL, * m_DiskService = NULL;
 		IWbemClassObject* m_AWCCGetObj = NULL, *m_InParamaters = NULL;
-		IWbemRefresher* m_Refresher;
+		IWbemRefresher* m_Refresher = NULL;
 		bool isAlienware = false, // Alienware control found into WMI
 			isSupported = false, // ..And has correct interface (one of)
 			isTcc = false, // TCCOffset method found and working
