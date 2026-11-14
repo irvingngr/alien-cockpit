@@ -99,43 +99,84 @@ void MonHelper::Stop() {
 void MonHelper::SetCurrentMode(int newMode) {
 	if (!acpi || !acpi->isSupported || powerSize == 0) return;
 	if (newMode < 0) {
-		//DebugPrint("Mon: Switching from profile\n");
 		newMode = fan_conf->lastProf->gmodeStage ? powerSize :
 			fan_conf->acPower ? fan_conf->lastProf->powerStage : fan_conf->lastProf->powerStageDC;
 	}
 	if (newMode != powerMode) {
 		if (newMode < powerSize) {
+			fullSpeedManual = false;
 			if (powerMode == powerSize) {
 				acpi->SetGMode(0);
 				acpi->SetPower(0xa0);
 			}
 			ResetBoost();
 			acpi->SetPower(acpi->powers[newMode]);
-			//DebugPrint("Mon: Power mode switch from " + (powerMode == powerSize ? "G-mode" : to_string(powerMode)) + " to " + to_string(newMode) + "\n");
 		}
 		else {
 			acpi->SetGMode(1);
-			//DebugPrint("Mon: Power mode switch from " + to_string(powerMode) + " to G-mode\n");
+			if (!acpi->isGmode || acpi->GetGMode() <= 0) {
+				fullSpeedManual = true;
+				acpi->SetPower(acpi->powers[0]);
+				for (int i = 0; i < fansize; i++) {
+					acpi->SetFanBoost(i, 100);
+				}
+				powerMode = 0;
+				ToggleMode();
+				return;
+			}
 		}
 		powerMode = newMode;
 		ToggleMode();
 	}
-#ifdef _DEBUG
-	//else {
-	//	DebugPrint("Mon: Same power mode\n");
-	//}
-#endif
+}
+
+void MonHelper::SetFullSpeed() {
+	if (!acpi || !acpi->isSupported || powerSize == 0) return;
+	fan_conf->lastProf->gmodeStage = true;
+	if (acpi->isGmode) {
+		fullSpeedManual = false;
+		acpi->SetGMode(1);
+		if (acpi->GetGMode() > 0) {
+			powerMode = powerSize;
+			ToggleMode();
+			return;
+		}
+	}
+	// Fallback when G-Mode WMI doesn't engage: switch to unlocked manual mode and lock all fans to 100% boost
+	fullSpeedManual = true;
+	if (fan_conf->acPower)
+		fan_conf->lastProf->powerStage = 0;
+	else
+		fan_conf->lastProf->powerStageDC = 0;
+	acpi->SetGMode(0);
+	acpi->SetPower(acpi->powers[0]);
+	powerMode = 0;
+	for (int i = 0; i < fansize; i++) {
+		acpi->SetFanBoost(i, 100);
+	}
+	if (!stopped) Run();
 }
 
 byte MonHelper::GetFanPercent(byte fanID)
 {
 	auto bst = &fan_conf->boosts[fanID];
 	WORD rpm = fanRpm[fanID];
-	if (!bst->maxRPM) // no MaxRPM yet
-		*bst = { 100, (WORD)max(acpi->GetMaxRPM(fanID), 1000) };
-	if (bst->maxRPM < rpm) // current RPM higher, then BIOS high
+	int maxR = acpi ? acpi->GetMaxRPM(fanID) : -1;
+	if (maxR > 1000 && bst->maxRPM < (WORD)maxR) {
+		bst->maxRPM = (WORD)maxR;
+	}
+	if (!bst->maxRPM) { // no MaxRPM yet
+		*bst = { 100, (WORD)max(maxR, 1000) };
+	}
+	if (bst->maxRPM < rpm) { // current RPM higher, then BIOS high
 		bst->maxRPM = rpm;
-	return (rpm * 100) / bst->maxRPM;
+	}
+	if (rpm == 0) return 0;
+	int acpiPct = acpi ? acpi->GetFanPercent(fanID) : -1;
+	if (acpiPct >= 0 && acpiPct <= 100) {
+		return (byte)acpiPct;
+	}
+	return (byte)min(100, (int)((rpm * 100) / max((WORD)1000, bst->maxRPM)));
 }
 
 int MonHelper::GetPowerMode() {
@@ -151,12 +192,14 @@ int MonHelper::GetPowerMode() {
 
 void MonHelper::SetPowerMode(byte newMode) {
 	if (!acpi || !acpi->isSupported || powerSize == 0) return;
-	if (newMode < powerSize)
+	fullSpeedManual = false;
+	if (newMode < powerSize) {
 		if (fan_conf->acPower)
 			fan_conf->lastProf->powerStage = newMode;
 		else
 			fan_conf->lastProf->powerStageDC = newMode;
-	fan_conf->lastProf->gmodeStage = newMode == powerSize;
+	}
+	fan_conf->lastProf->gmodeStage = newMode >= powerSize;
 	SetCurrentMode(newMode);
 }
 
@@ -207,19 +250,21 @@ void CMonProc(LPVOID param) {
 	AlienFan_SDK::Control* acpi = src->acpi;
 	fan_profile* active = fan_conf->lastProf;
 
-#ifdef _DEBUG
-	if (!active)
-		DebugPrint("Mon: Zero fan profile!");
-#endif
-
-	//DebugPrint("Mon: Poll started\n");
 	if (src->inControl && active) {
 		// check power mode
+		if (src->fullSpeedManual) {
+			src->GetSensorData(true);
+			for (int i = 0; i < src->fansize; i++) {
+				if (acpi->GetFanBoost(i) < 100) {
+					acpi->SetFanBoost(i, 100);
+				}
+			}
+			return;
+		}
 		src->powerMode = src->GetSensorData(true);
 		src->SetCurrentMode();
 
-		if (!src->powerMode && src->modified) {
-			//DebugPrint("Mon: Boost calc started\n");
+		if (!src->powerMode) {
 			int cBoost;
 			for (auto& cIter : active->fanControls) {
 				// Check boost
@@ -229,6 +274,7 @@ void CMonProc(LPVOID param) {
 					if (fIter->second.active) {
 						sen_block* cur = &fIter->second;
 						WORD senID = fIter->first;
+						if (cur->points.size() < 2) continue;
 						auto k = cur->points.begin() + 1;
 						for (; k != cur->points.end() && src->senValues[senID] > k->temp; k++);
 						auto ko = k - 1;
@@ -256,9 +302,7 @@ void CMonProc(LPVOID param) {
 					else
 						src->fanSleep[fanID] = 0;
 					if (curBoostRaw != boostOld) {
-						int res = acpi->SetFanBoost(fanID, curBoostRaw);
-						//DebugPrint("Boost for fan#" + to_string(fanID) + " changed from " + to_string(boostOld)
-						//	+ " to " + to_string(curBoostRaw) + ", result " + to_string(res) + "\n");
+						acpi->SetFanBoost(fanID, curBoostRaw);
 					}
 				}
 				else
@@ -266,5 +310,4 @@ void CMonProc(LPVOID param) {
 			}
 		}
 	}
-	//DebugPrint("Mon: poll ended\n");
 }

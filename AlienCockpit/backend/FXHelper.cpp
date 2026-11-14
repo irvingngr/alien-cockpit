@@ -159,6 +159,9 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 	AlienFX_SDK::Afx_action red{ 0 };
 	red.r = 255;
 
+	if (dev->dev->version == AlienFX_SDK::API_V4) {
+		dev->dev->Reset();
+	}
 	if (!dev->lights.empty()) {
 		vector<byte> opLights;
 		for (auto lIter = dev->lights.begin(); lIter != dev->lights.end(); lIter++) {
@@ -167,24 +170,30 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 		}
 		if (!opLights.empty()) {
 			dev->dev->SetMultiColor(&opLights, off);
-			dev->dev->UpdateColors();
+			if (dev->dev->version != AlienFX_SDK::API_V4) {
+				dev->dev->UpdateColors();
+			}
 		}
 	}
 	if (oldtest >= 0 && oldtest != id) {
 		dev->dev->SetColor((byte)oldtest, off);
-		dev->dev->UpdateColors();
+		if (dev->dev->version != AlienFX_SDK::API_V4) {
+			dev->dev->UpdateColors();
+		}
 	}
 	if (id >= 0) {
-		// Ensure API_V4 unmapped channels are energized too
+		dev->dev->SetColor((byte)id, red);
+		oldtest = id;
+		dev->dev->UpdateColors();
 		if (dev->dev->version == AlienFX_SDK::API_V4) {
 			vector<AlienFX_SDK::Afx_light> tempProbe{ { (byte)id, { 0, 0 }, "Probe" } };
 			dev->dev->SetBrightness((byte)(finalBrightness > 0 ? finalBrightness : 255), dev->brightness, &tempProbe, true);
 		}
-		dev->dev->SetColor((byte)id, red);
-		oldtest = id;
-		dev->dev->UpdateColors();
 	} else {
 		oldtest = -1;
+		if (dev->dev->version == AlienFX_SDK::API_V4) {
+			dev->dev->UpdateColors();
+		}
 	}
 }
 
@@ -297,11 +306,11 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 				dev->dev->version != AlienFX_SDK::API_V5 && dev->dev->version != AlienFX_SDK::API_ACPI &&
 				action->type != AlienFX_SDK::AlienFX_A_Color) {
 				if (dev->dev->version == AlienFX_SDK::API_V7) {
-					if (action->type != AlienFX_SDK::AlienFX_A_Breathing) {
-						action->type = (newBlock.actsize >= 2) ? AlienFX_SDK::AlienFX_A_Breathing : AlienFX_SDK::AlienFX_A_Color;
+					if (action->type != AlienFX_SDK::AlienFX_A_Morph) {
+						action->type = (newBlock.actsize >= 2) ? AlienFX_SDK::AlienFX_A_Morph : AlienFX_SDK::AlienFX_A_Color;
 					}
 				} else {
-					// Convert custom software effects (e.g. Summer = 7) safely to static color on hardware controllers
+					// Convert custom software effects safely to static color on hardware controllers
 					if (action->type > AlienFX_SDK::AlienFX_A_Power) {
 						action->type = AlienFX_SDK::AlienFX_A_Color;
 					}
@@ -406,17 +415,6 @@ void FXHelper::Refresh(bool forced)
 		RefreshZone(&it, false);
 	}
 	conf->modifyProfile.unlockRead();
-	if (conf->summerMode) {
-		vector<AlienFX_SDK::Afx_action> summerCyan{ { AlienFX_SDK::AlienFX_A_Color, 5, 50, 42, 196, 255 } };
-		for (const auto& dev : conf->afx_dev.fxdevs) {
-			if (!dev.present || !dev.dev) continue;
-			if (dev.dev->version == AlienFX_SDK::API_V5 || dev.dev->version == AlienFX_SDK::API_ACPI) continue;
-			for (const auto& l : dev.lights) {
-				if (l.flags & ALIENFX_FLAG_POWER) continue;
-				SetLight(MAKELONG(dev.pid, l.lightid), &summerCyan);
-			}
-		}
-	}
 	if (!forced && conf->stateEffects && eve) {
 		RefreshCounters(true);
 		RefreshAmbient(true);
@@ -820,6 +818,13 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 			src->modifyQuery.unlockWrite();
 
 			switch (current.command) {
+			case 6: // emergency white diagnostic test
+				lightQuery->lstate.clear();
+				dev_query.clear();
+				if (dev && dev->present && dev->dev && dev->dev->version == AlienFX_SDK::API_V4) {
+					dev->dev->EmergencyWhiteV4();
+				}
+				break;
 			case 5: // clear light states
 				lightQuery->lstate.clear();
 				break;
@@ -899,4 +904,70 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 	delete ld;
 	if (SUCCEEDED(hrCom)) CoUninitialize();
 	return 0;
+}
+
+bool FXHelper::EmergencyWhiteAll()
+{
+	if (!conf) return false;
+	vector<AlienFX_SDK::Afx_action> white{ { AlienFX_SDK::AlienFX_A_Color, 5, 50, 255, 255, 255 } };
+	bool anySent = false;
+	QueryAllDevs(LightQueryElement({ 0, 5 }));
+	for (const auto& dev : conf->afx_dev.fxdevs) {
+		if (!dev.present || !dev.dev) continue;
+		anySent = true;
+		if (dev.dev->version == AlienFX_SDK::API_V4) {
+			QueryCommand(dev.pid, LightQueryElement({ 0, 6 }));
+		} else if (dev.dev->version == AlienFX_SDK::API_ACPI) {
+			for (byte i = 0; i < 32; i++) {
+				SetLight(MAKELONG(dev.pid, i), &white);
+			}
+		} else if (!dev.lights.empty()) {
+			for (const auto& l : dev.lights) {
+				if (l.flags & ALIENFX_FLAG_POWER) continue;
+				SetLight(MAKELONG(dev.pid, l.lightid), &white);
+			}
+		} else {
+			for (byte i = 0; i < 16; i++) {
+				SetLight(MAKELONG(dev.pid, i), &white);
+			}
+		}
+	}
+	QueryUpdate(1);
+	return anySent;
+}
+
+void FXHelper::ApplyMouseLowBatteryRed(bool active)
+{
+	static bool prevLow = false;
+	if (!conf) return;
+	if (!active) {
+		if (prevLow) {
+			prevLow = false;
+			ClearAndRefresh(true);
+		}
+		return;
+	}
+	prevLow = true;
+	vector<AlienFX_SDK::Afx_action> redAlert{ { AlienFX_SDK::AlienFX_A_Color, 5, 50, 255, 0, 0 } };
+	bool touched = false;
+	for (const auto& dev : conf->afx_dev.fxdevs) {
+		if (!dev.present || !dev.dev) continue;
+		bool isMouse = (dev.vid == 0x0461) || (dev.dev->version == AlienFX_SDK::API_V7) ||
+			(dev.name.find("610M") != string::npos) || (dev.name.find("Mouse") != string::npos) ||
+			(dev.name.find("mouse") != string::npos);
+		if (!isMouse) continue;
+		if (!dev.lights.empty()) {
+			for (const auto& l : dev.lights) {
+				SetLight(MAKELONG(dev.pid, l.lightid), &redAlert);
+			}
+		} else {
+			for (byte z = 1; z <= 3; z++) {
+				SetLight(MAKELONG(dev.pid, z), &redAlert);
+			}
+		}
+		touched = true;
+	}
+	if (touched) {
+		QueryUpdate(1);
+	}
 }

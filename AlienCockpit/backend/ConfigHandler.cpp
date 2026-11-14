@@ -169,6 +169,7 @@ void ConfigHandler::Load() {
 	GetReg("Minimized", &startMinimized);
 	GetReg("AlwaysAdmin", &alwaysAdmin);
 	GetReg("StartupIntro", &startupIntro, 1);
+	GetReg("IntroStyle", &introStyle, 0);
 	GetReg("UpdateCheck", &updateCheck, 1);
 	GetReg("LightsOn", &lightsOn, 1);
 	GetReg("Dimmed", &dimmed);
@@ -194,7 +195,12 @@ void ConfigHandler::Load() {
 	GetReg("KeyboardShortcut", &keyShortcuts, 1);
 	GetReg("GESpeed", &geTact, 100);
 	GetReg("MonDC", &dcFreq, 0);
-	GetReg("SummerMode", &summerMode, 0);
+	{
+		DWORD size = sizeof(DWORD);
+		if (RegGetValue(hKeyMain, NULL, "WavesMode", RRF_RT_DWORD | RRF_ZEROONFAILURE, NULL, &wavesMode, &size) != ERROR_SUCCESS) {
+			GetReg("SummerMode", &wavesMode, 0);
+		}
+	}
 
 	{
 		char favBuf[2048]{};
@@ -386,6 +392,7 @@ void ConfigHandler::Save() {
 	SetReg("Minimized", startMinimized);
 	SetReg("AlwaysAdmin", alwaysAdmin);
 	SetReg("StartupIntro", startupIntro);
+	SetReg("IntroStyle", introStyle);
 	SetReg("UpdateCheck", updateCheck);
 	SetReg("LightsOn", lightsOn);
 	SetReg("Dimmed", dimmed);
@@ -412,7 +419,7 @@ void ConfigHandler::Save() {
 	SetReg("KeyboardShortcut", keyShortcuts);
 	SetReg("GESpeed", geTact);
 	SetReg("MonDC", dcFreq);
-	SetReg("SummerMode", summerMode);
+	SetReg("WavesMode", wavesMode);
 	RegSetValueExA(hKeyMain, "FavoriteColors", 0, REG_SZ, (const BYTE*)favoriteColors.c_str(), (DWORD)(favoriteColors.size() + 1));
 
 	RegSetValueEx(hKeyMain, TEXT("CustomColors"), 0, REG_BINARY, (BYTE*)customColors, sizeof(DWORD) * 16);

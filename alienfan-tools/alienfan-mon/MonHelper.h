@@ -22,12 +22,14 @@ public:
 	WORD powerMode = 0;
 	WORD fansize = 0, powerSize = 0, sensorSize = 0;
 	bool modified = true;
+	bool fullSpeedManual = false;
 
 	MonHelper();
 	~MonHelper();
 	void Start();
 	void Stop();
 	void SetCurrentMode(int newMode = -1);
+	void SetFullSpeed();
 	byte GetFanPercent(byte fanID);
 	int GetPowerMode();
 	void SetPowerMode(byte newMode);

@@ -63,7 +63,7 @@ static HHOOK g_kbdHook = nullptr;
 
 static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
-        if (CockpitBridge::IsSummerEffectActive()) {
+        if (CockpitBridge::IsWavesModeActive()) {
             const KBDLLHOOKSTRUCT* kbd = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lParam);
             if (kbd) {
                 CockpitBridge::NotifyKeyPress(kbd->vkCode);
@@ -360,8 +360,10 @@ static void EnsureDefaultDeviceMappings() {
                     anyAdded = true;
                 } else {
                     byte fallbackCount = 16;
-                    if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0) {
-                        fallbackCount = dev.dev->v4MaxZones;
+                    if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4) {
+                        fallbackCount = (dev.pid == 0x0551)
+                            ? static_cast<byte>(std::max<int>(45, dev.dev->v4MaxZones))
+                            : (dev.dev->v4MaxZones > 0 ? dev.dev->v4MaxZones : 16);
                     } else if (dev.dev && dev.dev->version == AlienFX_SDK::API_ACPI) {
                         fallbackCount = 8;
                     }
@@ -403,10 +405,28 @@ static void EnsureDefaultDeviceMappings() {
             }
         }
 
+        // Ensure AA18250 AW-ELC (PID 0x0551) has at least 45 zones (0..44, covering touchpad 0x24 = 36)
+        if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.pid == 0x0551 && hasPlaceholder) {
+            byte targetCount = static_cast<byte>(std::max<int>(45, dev.dev->v4MaxZones));
+            for (byte i = 0; i < targetCount; ++i) {
+                bool exists = std::any_of(dev.lights.begin(), dev.lights.end(),
+                    [i](const AlienFX_SDK::Afx_light& l) { return l.lightid == i; });
+                if (!exists) {
+                    AlienFX_SDK::Afx_light nl{};
+                    nl.lightid = i;
+                    nl.flags = 0;
+                    nl.name = "LED Zone " + std::to_string(i);
+                    dev.lights.push_back(nl);
+                    anyAdded = true;
+                }
+            }
+        }
+
         // Trim out-of-range auto-generated V4 chassis zones so AW-ELC FINISH_PLAY won't reject valid zones
         if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0) {
+            byte trimLimit = (dev.pid == 0x0551) ? static_cast<byte>(std::max<int>(45, dev.dev->v4MaxZones)) : dev.dev->v4MaxZones;
             for (auto lit = dev.lights.begin(); lit != dev.lights.end(); ) {
-                if (lit->lightid >= dev.dev->v4MaxZones && lit->name.rfind("LED Zone ", 0) == 0) {
+                if (lit->lightid >= trimLimit && lit->name.rfind("LED Zone ", 0) == 0) {
                     lit = dev.lights.erase(lit);
                     anyAdded = true;
                 } else {
@@ -571,7 +591,9 @@ static void InitWebView(HWND hwnd) {
                                             }
                                             std::string resp = CockpitBridge::HandleMessage(jsonStr);
                                             if (jsonStr.find("\"toggleLights\"") != std::string::npos ||
+                                                jsonStr.find("\"toggleWaves\"") != std::string::npos ||
                                                 jsonStr.find("\"toggleSummer\"") != std::string::npos ||
+                                                jsonStr.find("\"emergencyWhite\"") != std::string::npos ||
                                                 jsonStr.find("\"activateProfile\"") != std::string::npos ||
                                                 jsonStr.find("\"applyGamePreset\"") != std::string::npos ||
                                                 jsonStr.find("\"restorePreset\"") != std::string::npos ||

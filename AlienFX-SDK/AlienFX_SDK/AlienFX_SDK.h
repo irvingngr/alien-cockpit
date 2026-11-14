@@ -164,6 +164,7 @@ namespace AlienFX_SDK {
 			};
 			DWORD devID;
 		};
+		WORD hidUsagePage = 0, hidUsage = 0, hidInLen = 0, hidOutLen = 0, hidFeatLen = 0;
 		int version = API_UNKNOWN; // interface version, will stay at API_UNKNOWN if not initialized
 		byte bright = 100; // Last brightness set for device (0..100 scale for v4/v6/v7)
 		byte v4MaxZones = 0; // Reported hardware zone count for API_V4 (0 = unknown)
@@ -173,6 +174,9 @@ namespace AlienFX_SDK {
 
 		// Support function to send data to USB device
 		bool PrepareAndSend(const byte* command, vector<Afx_icommand>* mods = NULL);
+
+		// Diagnostic helper: energize channels 0..44 white on API_V4
+		bool EmergencyWhiteV4();
 
 		// Initialize device
 		// If vid is 0 or absent, first device found into the system will be used, otherwise device with this VID only.
@@ -336,6 +340,21 @@ namespace AlienFX_SDK {
 
 		// get light flags (Power, indicator) by PID
 		int GetFlags(WORD pid, WORD lightid);
+
+		struct HidDiagEntry {
+			WORD vid = 0;
+			WORD pid = 0;
+			WORD usagePage = 0;
+			WORD usage = 0;
+			WORD inLen = 0;
+			WORD outLen = 0;
+			WORD featLen = 0;
+			int detectedApi = API_UNKNOWN;
+			DWORD openError = 0;
+			string product;
+			string path;
+		};
+		static vector<HidDiagEntry> CollectHardwareDiagnostics();
 	};
 
 }

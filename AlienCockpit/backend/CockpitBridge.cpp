@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 extern ConfigHandler* conf;
 extern FXHelper* fxhl;
@@ -28,6 +29,7 @@ static std::string g_activePresetName;
 
 static bool g_probeActive = false;
 static bool g_introActive = false;
+static int g_activeIntroStyle = 0;
 static ULONGLONG g_introStartMs = 0;
 
 struct WaterDrop {
@@ -103,7 +105,7 @@ static byte EffectNameToType(const std::string& eff) {
     if (eff == "morph") return AlienFX_SDK::AlienFX_A_Morph;
     if (eff == "spectrum") return AlienFX_SDK::AlienFX_A_Spectrum;
     if (eff == "rainbow" || eff == "wave" || eff == "aurora") return AlienFX_SDK::AlienFX_A_Rainbow;
-    if (eff == "summer") return EFFECT_SUMMER;
+    if (eff == "waves" || eff == "summer") return EFFECT_SUMMER;
     return AlienFX_SDK::AlienFX_A_Color;
 }
 
@@ -114,7 +116,7 @@ static std::string EffectTypeToName(byte t, size_t colorCount = 1) {
     case AlienFX_SDK::AlienFX_A_Morph: return "morph";
     case AlienFX_SDK::AlienFX_A_Spectrum: return "spectrum";
     case AlienFX_SDK::AlienFX_A_Rainbow: return (colorCount >= 3) ? "aurora" : "wave";
-    case EFFECT_SUMMER: return "summer";
+    case EFFECT_SUMMER: return "waves";
     default: return "static";
     }
 }
@@ -156,6 +158,11 @@ std::string CockpitBridge::BuildTelemetryJson() {
         acOnline = (sps.ACLineStatus == 1);
     }
 
+    bool acpiReady = (mon != nullptr && mon->acpi != nullptr && mon->acpi->isSupported);
+    if (acpiReady) {
+        mon->GetSensorData(true);
+    }
+
     int liveTemp = 0;
     if (mon && !mon->senValues.empty()) {
         for (const auto& kv : mon->senValues) {
@@ -179,9 +186,12 @@ std::string CockpitBridge::BuildTelemetryJson() {
     sys["ac"] = acOnline;
     root["system"] = sys;
 
-    // Batteries
+    // Batteries & Low-Battery Mouse Red Alert (<= 15%)
+    bool mouseLowBattAlert = false;
     SimpleJson::Value batts = SimpleJson::Value::Array();
     for (const auto& b : BatteryMonitor::GetAllBatteries()) {
+        bool isLowMouse = (b.type == "mouse" && b.percentage >= 0 && b.percentage <= 15 && !b.charging);
+        if (isLowMouse) mouseLowBattAlert = true;
         SimpleJson::Value bo = SimpleJson::Value::Object();
         bo["id"] = b.id;
         bo["name"] = b.name;
@@ -190,20 +200,23 @@ std::string CockpitBridge::BuildTelemetryJson() {
         bo["charging"] = b.charging;
         bo["acOnline"] = b.acOnline;
         bo["lifeSeconds"] = b.lifeSeconds;
+        bo["lowBattAlert"] = isLowMouse;
         batts.push(bo);
     }
     root["batteries"] = batts;
+    if (fxhl && !g_probeActive && conf && conf->lightsOn && conf->stateOn) {
+        fxhl->ApplyMouseLowBatteryRed(mouseLowBattAlert);
+    }
 
     // Fans & Sensors
     SimpleJson::Value fanData = SimpleJson::Value::Object();
-    bool acpiReady = (mon != nullptr && mon->acpi != nullptr && mon->acpi->isSupported);
     fanData["available"] = (acpiReady && (mon->fansize > 0 || mon->sensorSize > 0 || mon->powerSize > 0));
     fanData["isAdmin"] = (IsUserAnAdmin() != FALSE);
     if (mon) {
-        if (acpiReady && mon->senValues.empty()) {
-            mon->GetSensorData(true);
-        }
-        fanData["powerMode"] = static_cast<int>(mon->powerMode);
+        int uiPowerMode = (mon->fullSpeedManual || (mon->powerSize > 0 && mon->powerMode >= mon->powerSize))
+            ? 3
+            : static_cast<int>(mon->powerMode);
+        fanData["powerMode"] = uiPowerMode;
         SimpleJson::Value sensors = SimpleJson::Value::Array();
         for (const auto& kv : mon->senValues) {
             SimpleJson::Value s = SimpleJson::Value::Object();
@@ -260,7 +273,8 @@ std::string CockpitBridge::BuildFullStateJson() {
     settings["startMinimized"] = (conf->startMinimized != 0);
     settings["alwaysAdmin"] = (conf->alwaysAdmin != 0);
     settings["startupIntro"] = (conf->startupIntro != 0);
-    settings["summerMode"] = (conf->summerMode != 0);
+    settings["introStyle"] = static_cast<int>(conf->introStyle);
+    settings["wavesMode"] = (conf->wavesMode != 0);
     settings["isAdmin"] = (IsUserAnAdmin() != FALSE);
     {
         SimpleJson::Value favs = SimpleJson::Value::Array();
@@ -446,23 +460,12 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         return BuildFullStateJson();
     }
 
-    if (cmd == "toggleSummer" && conf && fxhl) {
-        conf->summerMode = msg.get("enabled").asBool(false) ? 1 : 0;
-        BeginCrossfade(600);
-        if (!conf->summerMode) {
-            // Clear unmapped static V5/ACPI keys back to dark before restoring active profile lightsets
-            fxhl->QueryAllDevs(LightQueryElement({ 0, 5 }));
-            vector<AlienFX_SDK::Afx_action> darkAct{ { AlienFX_SDK::AlienFX_A_Color, 5, 50, 0, 0, 0 } };
-            for (const auto& dev : conf->afx_dev.fxdevs) {
-                if (!dev.present || !dev.dev) continue;
-                if (dev.dev->version != AlienFX_SDK::API_V5 && dev.dev->version != AlienFX_SDK::API_ACPI) continue;
-                for (const auto& l : dev.lights) {
-                    if (l.flags & ALIENFX_FLAG_POWER) continue;
-                    fxhl->SetLight(MAKELONG(dev.pid, l.lightid), &darkAct);
-                }
-            }
-            fxhl->Refresh(true);
-        } else {
+    if ((cmd == "toggleWaves" || cmd == "toggleSummer") && conf && fxhl) {
+        conf->wavesMode = msg.get("enabled").asBool(false) ? 1 : 0;
+        if (!conf->wavesMode) {
+            std::lock_guard<std::mutex> lock(g_dropMutex);
+            g_waterDrops.clear();
+            BeginCrossfade(350);
             fxhl->deferV5Refresh = true;
             fxhl->ClearAndRefresh(true);
             fxhl->deferV5Refresh = false;
@@ -819,8 +822,79 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     }
 
     if (cmd == "testIntro") {
-        CockpitBridge::TriggerStartupIntro();
+        int style = msg.has("style") ? msg.get("style").asInt(-1) : -1;
+        CockpitBridge::TriggerStartupIntro(style);
         return "{\"ok\":true}";
+    }
+
+    if (cmd == "emergencyWhite" && conf && fxhl) {
+        g_probeActive = false;
+        g_introActive = false;
+        bool ok = fxhl->EmergencyWhiteAll();
+        int cnt = 0;
+        for (const auto& d : conf->afx_dev.fxdevs) {
+            if (d.present && d.dev) cnt++;
+        }
+        SimpleJson::Value resp = SimpleJson::Value::Object();
+        resp["ok"] = ok;
+        resp["count"] = cnt;
+        return resp.dump();
+    }
+
+    if (cmd == "detectHardware" && conf) {
+        SimpleJson::Value resp = SimpleJson::Value::Object();
+        resp["ok"] = true;
+
+        SimpleJson::Value wmi = SimpleJson::Value::Object();
+        bool acpiReady = (mon != nullptr && mon->acpi != nullptr);
+        wmi["isAlienware"] = (acpiReady && mon->acpi->isAlienware);
+        wmi["isSupported"] = (acpiReady && mon->acpi->isSupported);
+        wmi["isGmode"] = (acpiReady && mon->acpi->isGmode);
+        wmi["fans"] = mon ? static_cast<int>(mon->fansize) : 0;
+        wmi["sensors"] = mon ? static_cast<int>(mon->sensorSize) : 0;
+        wmi["powerModes"] = mon ? static_cast<int>(mon->powerSize) : 0;
+        resp["wmi"] = wmi;
+
+        SimpleJson::Value ctrls = SimpleJson::Value::Array();
+        for (const auto& e : AlienFX_SDK::Mappings::CollectHardwareDiagnostics()) {
+            SimpleJson::Value co = SimpleJson::Value::Object();
+            char hexBuf[16];
+            snprintf(hexBuf, sizeof(hexBuf), "0x%04X", e.vid);
+            co["vid"] = std::string(hexBuf);
+            snprintf(hexBuf, sizeof(hexBuf), "0x%04X", e.pid);
+            co["pid"] = std::string(hexBuf);
+            snprintf(hexBuf, sizeof(hexBuf), "0x%04X", e.usagePage);
+            co["usagePage"] = std::string(hexBuf);
+            snprintf(hexBuf, sizeof(hexBuf), "0x%04X", e.usage);
+            co["usage"] = std::string(hexBuf);
+            co["inLen"] = static_cast<int>(e.inLen);
+            co["outLen"] = static_cast<int>(e.outLen);
+            co["featLen"] = static_cast<int>(e.featLen);
+            co["api"] = e.detectedApi;
+            co["openError"] = static_cast<int>(e.openError);
+            co["product"] = e.product;
+            co["path"] = e.path;
+            ctrls.push(co);
+        }
+        resp["controllers"] = ctrls;
+
+        SimpleJson::Value mapped = SimpleJson::Value::Array();
+        for (const auto& d : conf->afx_dev.fxdevs) {
+            SimpleJson::Value mo = SimpleJson::Value::Object();
+            char hexBuf[16];
+            snprintf(hexBuf, sizeof(hexBuf), "0x%04X", d.vid);
+            mo["vid"] = std::string(hexBuf);
+            snprintf(hexBuf, sizeof(hexBuf), "0x%04X", d.pid);
+            mo["pid"] = std::string(hexBuf);
+            mo["name"] = d.name;
+            mo["present"] = (d.present && d.dev != nullptr);
+            mo["version"] = d.dev ? d.dev->version : -1;
+            mo["v4MaxZones"] = d.dev ? static_cast<int>(d.dev->v4MaxZones) : 0;
+            mo["lightCount"] = static_cast<int>(d.lights.size());
+            mapped.push(mo);
+        }
+        resp["mappedDevices"] = mapped;
+        return resp.dump();
     }
 
     if (cmd == "bindLightMapping" && conf) {
@@ -1044,30 +1118,63 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     }
 
     if (cmd == "setPowerMode" && mon && fan_conf) {
-        byte mode = static_cast<byte>(msg.get("mode").asInt(0));
-        mon->SetPowerMode(mode);
+        int rawMode = msg.get("mode").asInt(0);
+        if (rawMode >= 3) {
+            mon->SetFullSpeed();
+        } else {
+            mon->SetPowerMode(static_cast<byte>(std::clamp(rawMode, 0, 255)));
+        }
         fan_conf->Save();
         return BuildTelemetryJson();
     }
 
     if (cmd == "setFanCurve" && fan_conf && mon) {
-        byte fanId = static_cast<byte>(msg.get("fanId").asInt(0));
+        int reqFanId = msg.get("fanId").asInt(-1);
         WORD sensorId = static_cast<WORD>(msg.get("sensorId").asInt(0));
         bool active = msg.get("active").asBool(true);
         const auto& pts = msg.get("points").arrVal;
+
+        if (sensorId == 0 || (!mon->senValues.empty() && !mon->senValues.count(sensorId))) {
+            if (mon->acpi && !mon->acpi->sensors.empty()) {
+                sensorId = mon->acpi->sensors.front().sid;
+            } else if (!mon->senValues.empty()) {
+                sensorId = mon->senValues.begin()->first;
+            }
+        }
+
         if (fan_conf->lastProf) {
-            sen_block& blk = fan_conf->lastProf->fanControls[fanId][sensorId];
-            blk.active = active;
-            blk.points.clear();
-            for (const auto& pt : pts) {
-                fan_point fp;
-                fp.temp = static_cast<byte>(pt.get("temp").asInt(40));
-                fp.boost = static_cast<byte>(pt.get("boost").asInt(50));
-                blk.points.push_back(fp);
+            std::vector<byte> targetFans;
+            if (reqFanId < 0) {
+                int fc = std::max<int>(1, static_cast<int>(mon->fansize));
+                for (int fi = 0; fi < fc; ++fi) {
+                    targetFans.push_back(static_cast<byte>(fi));
+                }
+            } else {
+                targetFans.push_back(static_cast<byte>(std::clamp(reqFanId, 0, 255)));
+            }
+
+            for (byte fId : targetFans) {
+                for (auto& skv : fan_conf->lastProf->fanControls[fId]) {
+                    if (skv.first != sensorId) {
+                        skv.second.active = false;
+                    }
+                }
+                sen_block& blk = fan_conf->lastProf->fanControls[fId][sensorId];
+                blk.active = active;
+                blk.points.clear();
+                for (const auto& pt : pts) {
+                    fan_point fp;
+                    fp.temp = static_cast<byte>(std::clamp(pt.get("temp").asInt(40), 0, 120));
+                    fp.boost = static_cast<byte>(std::clamp(pt.get("boost").asInt(50), 0, 100));
+                    blk.points.push_back(fp);
+                }
+            }
+            if (active && (mon->powerMode != 0 || mon->fullSpeedManual)) {
+                mon->SetPowerMode(0);
             }
             fan_conf->Save();
         }
-        return "{\"ok\":true}";
+        return BuildFullStateJson();
     }
 
     if (cmd == "setSettings" && conf) {
@@ -1089,6 +1196,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 StartupManager::SetStartupEnabled(true, conf->startMinimized != 0, conf->alwaysAdmin != 0);
         }
         if (msg.has("startupIntro")) conf->startupIntro = msg.get("startupIntro").asBool(true) ? 1 : 0;
+        if (msg.has("introStyle")) conf->introStyle = static_cast<DWORD>(std::clamp(msg.get("introStyle").asInt(0), 0, 1));
         if (msg.has("gammaCorrection")) conf->gammaCorrection = msg.get("gammaCorrection").asBool(true) ? 1 : 0;
         if (msg.has("enableProfSwitch")) conf->enableProfSwitch = msg.get("enableProfSwitch").asBool(true) ? 1 : 0;
         if (msg.has("enableEffects")) conf->enableEffects = msg.get("enableEffects").asBool(true) ? 1 : 0;
@@ -1246,9 +1354,10 @@ static void VkToKeyXY(DWORD vk, double& nx, double& ny) {
     }
 }
 
-void CockpitBridge::TriggerStartupIntro() {
+void CockpitBridge::TriggerStartupIntro(int styleOverride) {
     if (!conf || !conf->lightsOn || !conf->stateOn) return;
     g_probeActive = false;
+    g_activeIntroStyle = (styleOverride >= 0) ? std::clamp(styleOverride, 0, 1) : static_cast<int>(conf->introStyle);
     g_introActive = true;
     g_introStartMs = GetTickCount64();
 }
@@ -1273,9 +1382,9 @@ void CockpitBridge::NotifyKeyPress(unsigned long vkCode) {
     g_waterDrops.push_back({ kx, ky, nowMs });
 }
 
-bool CockpitBridge::IsSummerEffectActive() {
+bool CockpitBridge::IsWavesModeActive() {
     if (!conf || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return false;
-    if (conf->summerMode) return true;
+    if (conf->wavesMode) return true;
     conf->modifyProfile.lockRead();
     bool active = false;
     for (const auto& ls : conf->activeProfile->lightsets) {
@@ -1288,6 +1397,44 @@ bool CockpitBridge::IsSummerEffectActive() {
     return active;
 }
 
+static bool SampleCockpitBannerPixel(int col, int row, double scrollCol) {
+    if (col < 0 || col > 19 || row < 0 || row > 4) return false;
+    // 5x5 bitmap glyphs for C, O, C, K, P, I, T
+    static const unsigned char kGlyphs[6][5] = {
+        { 0x0E, 0x10, 0x10, 0x10, 0x0E }, // 0: C
+        { 0x0E, 0x11, 0x11, 0x11, 0x0E }, // 1: O
+        { 0x11, 0x12, 0x1C, 0x12, 0x11 }, // 2: K
+        { 0x1E, 0x11, 0x1E, 0x10, 0x10 }, // 3: P
+        { 0x1F, 0x04, 0x04, 0x04, 0x1F }, // 4: I
+        { 0x1F, 0x04, 0x04, 0x04, 0x04 }  // 5: T
+    };
+    static const int kText[] = { 0, 1, 0, 2, 3, 4, 5 }; // C O C K P I T (7 * 6 - 1 = 41 cols)
+    int relCol = static_cast<int>(std::lround(col - scrollCol));
+    if (relCol < 0 || relCol >= 41) return false;
+    int chIdx = relCol / 6;
+    int glyphCol = relCol % 6;
+    if (glyphCol >= 5) return false;
+    int gId = kText[chIdx];
+    unsigned char mask = kGlyphs[gId][row];
+    return ((mask >> (4 - glyphCol)) & 1) != 0;
+}
+
+static int SampleAlienheadPixel(int col, int row) {
+    // Returns 0 = background, 1 = head silhouette, 2 = glowing eyes
+    // Centered across cols 6..12 (7 cols) x rows 0..5 (6 rows)
+    int lc = col - 6;
+    if (lc < 0 || lc > 6 || row < 0 || row > 5) return 0;
+    static const unsigned char kHead[6][7] = {
+        { 0, 1, 1, 1, 1, 1, 0 },
+        { 1, 1, 1, 1, 1, 1, 1 },
+        { 1, 2, 2, 1, 2, 2, 1 },
+        { 1, 1, 2, 1, 2, 1, 1 },
+        { 0, 1, 1, 1, 1, 1, 0 },
+        { 0, 0, 1, 1, 1, 0, 0 }
+    };
+    return kHead[row][lc];
+}
+
 void CockpitBridge::StepAnimatedEffects() {
     if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return;
     if (g_probeActive) return;
@@ -1297,11 +1444,9 @@ void CockpitBridge::StepAnimatedEffects() {
 
     if (g_introActive) {
         ULONGLONG elapsed = (nowMs >= g_introStartMs) ? (nowMs - g_introStartMs) : 0;
-        double p = static_cast<double>(elapsed) / 2600.0;
+        double durMs = (g_activeIntroStyle == 1) ? 3800.0 : 2600.0;
+        double p = static_cast<double>(elapsed) / durMs;
         if (p < 1.0) {
-            double sweepX = (p < 0.65)
-                ? ((p / 0.65) * 1.45 - 0.2)
-                : (1.25 - ((p - 0.65) / 0.35) * 1.45);
             bool introUpdated = false;
             for (const auto& dev : conf->afx_dev.fxdevs) {
                 if (!dev.present || !dev.dev) continue;
@@ -1321,15 +1466,57 @@ void CockpitBridge::StepAnimatedEffects() {
                     if (l.flags & ALIENFX_FLAG_POWER) continue;
                     double nx = 0.0, ny = 0.0;
                     GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
-                    double d = std::fabs((nx * 0.88 + ny * 0.22) - sweepX);
-                    double beam = std::exp(-(d * d) / 0.02);
-                    double tail = 0.22 * (1.0 - p) * (0.5 + 0.5 * std::sin(p * 12.0 + nx * 4.5));
-                    double v = std::clamp(beam + tail, 0.0, 1.0);
-                    double hue = 185.0 + 95.0 * std::sin(p * 6.2831853 + nx * 2.4);
 
                     AlienFX_SDK::Afx_action frame{};
                     frame.type = AlienFX_SDK::AlienFX_A_Color;
-                    HsvToRgb(hue, 0.92, v, frame.r, frame.g, frame.b);
+
+                    if (g_activeIntroStyle == 1) {
+                        int col = static_cast<int>(std::lround(nx * 19.0));
+                        int row = static_cast<int>(std::lround(ny * 5.0));
+                        if (p < 0.72) {
+                            double sp = p / 0.72;
+                            double scrollCol = 20.0 - sp * 61.0; // 20 -> -41
+                            bool lit = SampleCockpitBannerPixel(col, row, scrollCol);
+                            double scanBar = (row == 5) ? (0.35 + 0.65 * (0.5 + 0.5 * std::sin(p * 18.0 - col * 0.45))) : 0.0;
+                            if (lit) {
+                                double hue = 185.0 + 95.0 * (nx * 0.7 + sp * 0.3);
+                                HsvToRgb(hue, 0.90, 1.0, frame.r, frame.g, frame.b);
+                            } else if (scanBar > 0.0) {
+                                HsvToRgb(205.0, 0.95, 0.32 * scanBar, frame.r, frame.g, frame.b);
+                            } else {
+                                frame.r = 2; frame.g = 8; frame.b = 20;
+                            }
+                        } else {
+                            double ep = (p - 0.72) / 0.28;
+                            double pulse = std::sin(ep * 3.14159265);
+                            int cell = SampleAlienheadPixel(col, row);
+                            if (cell == 2) {
+                                frame.r = static_cast<byte>(std::lround(215.0 * pulse));
+                                frame.g = static_cast<byte>(std::lround(252.0 * pulse));
+                                frame.b = static_cast<byte>(std::lround(255.0 * pulse));
+                            } else if (cell == 1) {
+                                frame.r = static_cast<byte>(std::lround(36.0 * pulse));
+                                frame.g = static_cast<byte>(std::lround(200.0 * pulse));
+                                frame.b = static_cast<byte>(std::lround(255.0 * pulse));
+                            } else {
+                                double distCenter = std::hypot(nx - 0.5, ny - 0.5);
+                                double ring = std::exp(-((distCenter - ep * 0.75) * (distCenter - ep * 0.75)) / 0.015);
+                                frame.r = static_cast<byte>(std::lround(95.0 * ring * (1.0 - ep)));
+                                frame.g = static_cast<byte>(std::lround(20.0 * ring * (1.0 - ep)));
+                                frame.b = static_cast<byte>(std::lround(170.0 * ring * (1.0 - ep)));
+                            }
+                        }
+                    } else {
+                        double sweepX = (p < 0.65)
+                            ? ((p / 0.65) * 1.45 - 0.2)
+                            : (1.25 - ((p - 0.65) / 0.35) * 1.45);
+                        double d = std::fabs((nx * 0.88 + ny * 0.22) - sweepX);
+                        double beam = std::exp(-(d * d) / 0.02);
+                        double tail = 0.22 * (1.0 - p) * (0.5 + 0.5 * std::sin(p * 12.0 + nx * 4.5));
+                        double v = std::clamp(beam + tail, 0.0, 1.0);
+                        double hue = 185.0 + 95.0 * std::sin(p * 6.2831853 + nx * 2.4);
+                        HsvToRgb(hue, 0.92, v, frame.r, frame.g, frame.b);
+                    }
 
                     DWORD lgh = MAKELONG(dev.pid, l.lightid);
                     g_lastSentRgb[lgh] = frame;
@@ -1358,7 +1545,7 @@ void CockpitBridge::StepAnimatedEffects() {
         fadeT = 1.0 - (inv * inv * inv);
     }
 
-    // Snapshot active water drops outside lock so Summer wave stays zero-contention
+    // Snapshot active water drops outside lock so global Waves Mode stays zero-contention
     std::vector<WaterDrop> dropsSnapshot;
     {
         std::lock_guard<std::mutex> lock(g_dropMutex);
@@ -1369,91 +1556,47 @@ void CockpitBridge::StepAnimatedEffects() {
         dropsSnapshot = g_waterDrops;
     }
 
-    if (conf->summerMode) {
-        double tNorm = 0.5;
-        double cyclesPerSec = 0.035 + std::pow(tNorm, 1.75) * 0.65;
-        double angle = nowSec * cyclesPerSec * 6.283185307179586;
-        bool anySummerUpdated = false;
-        bool finalSettleFrame = (isFading && fadeT >= 1.0);
-        AlienFX_SDK::Afx_action waterBase{};
-        waterBase.r = 42; waterBase.g = 196; waterBase.b = 255;
-        AlienFX_SDK::Afx_action dark{ 0 };
-        AlienFX_SDK::Afx_action crest{};
-        crest.type = AlienFX_SDK::AlienFX_A_Color;
-        crest.r = 165; crest.g = 248; crest.b = 255;
+    static bool s_hadActiveDrops = false;
+    bool wavesEnabled = (conf->wavesMode != 0);
+    bool hasDrops = wavesEnabled && !dropsSnapshot.empty();
+    bool settleWaves = wavesEnabled && !hasDrops && s_hadActiveDrops;
+    bool needWavePass = hasDrops || settleWaves;
 
-        for (const auto& dev : conf->afx_dev.fxdevs) {
-            if (!dev.present || !dev.dev) continue;
-            if (dev.dev->version != AlienFX_SDK::API_V5 &&
-                dev.dev->version != AlienFX_SDK::API_ACPI) {
-                continue;
-            }
-            fxhl->modifyQuery.lockRead();
-            auto qIt = fxhl->devLightQuery.find(dev.pid);
-            size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
-            HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
-            fxhl->modifyQuery.unlockRead();
-            if (qSize > 0 && hEvt) SetEvent(hEvt);
-            if ((!finalSettleFrame && qSize > 12) || (qSize > 250)) continue;
-
-            for (const auto& l : dev.lights) {
-                if (l.flags & ALIENFX_FLAG_POWER) continue;
-                double nx = 0.0, ny = 0.0;
-                GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
-                double shimmer = 0.48 + 0.09 * (0.5 + 0.5 * std::sin(angle * 0.85 + nx * 3.1 - ny * 2.2));
-                AlienFX_SDK::Afx_action frame = LerpColor(dark, waterBase, shimmer);
-
-                double waveEnergy = 0.0;
-                for (const auto& drop : dropsSnapshot) {
-                    double ageSec = static_cast<double>(nowMs - drop.startMs) / 1000.0;
-                    if (ageSec < 0.0 || ageSec > 1.85) continue;
-                    double dist = std::hypot((nx - drop.x) * 1.85, (ny - drop.y));
-                    double radius = ageSec * (0.72 + tNorm * 0.85);
-                    double env = 1.0 - std::clamp(ageSec / 1.85, 0.0, 1.0);
-                    env *= env;
-                    double ring1 = std::exp(-((dist - radius) * (dist - radius)) / 0.032);
-                    double ring2 = (radius > 0.28)
-                        ? 0.45 * std::exp(-((dist - (radius - 0.28)) * (dist - (radius - 0.28))) / 0.025)
-                        : 0.0;
-                    double splash = (ageSec < 0.25 && dist < 0.22) ? (1.0 - ageSec / 0.25) * (1.0 - dist / 0.22) : 0.0;
-                    waveEnergy += (ring1 + ring2 + splash) * env;
-                }
-                if (waveEnergy > 0.001) {
-                    frame = LerpColor(frame, crest, std::clamp(waveEnergy, 0.0, 1.0));
-                }
-
-                DWORD lgh = MAKELONG(dev.pid, l.lightid);
-                if (isFading && fadeT < 1.0) {
-                    auto pIt = g_crossfade.prevColors.find(lgh);
-                    AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
-                    frame = LerpColor(prev, frame, fadeT);
-                }
-
-                g_lastSentRgb[lgh] = frame;
-                std::vector<AlienFX_SDK::Afx_action> acts{ frame };
-                fxhl->SetLight(lgh, &acts);
-                anySummerUpdated = true;
-            }
+    auto computeWaveEnergy = [&](double nx, double ny, double speedNorm) -> double {
+        double waveEnergy = 0.0;
+        for (const auto& drop : dropsSnapshot) {
+            double ageSec = static_cast<double>(nowMs - drop.startMs) / 1000.0;
+            if (ageSec < 0.0 || ageSec > 1.85) continue;
+            double dist = std::hypot((nx - drop.x) * 1.85, (ny - drop.y));
+            double radius = ageSec * (0.72 + speedNorm * 0.85);
+            double env = 1.0 - std::clamp(ageSec / 1.85, 0.0, 1.0);
+            env *= env;
+            double ring1 = std::exp(-((dist - radius) * (dist - radius)) / 0.032);
+            double ring2 = (radius > 0.28)
+                ? 0.45 * std::exp(-((dist - (radius - 0.28)) * (dist - (radius - 0.28))) / 0.025)
+                : 0.0;
+            double splash = (ageSec < 0.25 && dist < 0.22)
+                ? (1.0 - ageSec / 0.25) * (1.0 - dist / 0.22)
+                : 0.0;
+            waveEnergy += (ring1 + ring2 + splash) * env;
         }
-        if (anySummerUpdated) {
-            fxhl->QueryUpdate();
-        }
-        if (isFading && fadeT >= 1.0) {
-            g_crossfade.active = false;
-            g_crossfade.prevColors.clear();
-        }
-        return;
-    }
+        return std::clamp(waveEnergy, 0.0, 1.0);
+    };
+
+    AlienFX_SDK::Afx_action waveCrest{};
+    waveCrest.type = AlienFX_SDK::AlienFX_A_Color;
+    waveCrest.r = 215; waveCrest.g = 250; waveCrest.b = 255;
 
     bool anyUpdated = false;
-    bool finalSettleFrame = (isFading && fadeT >= 1.0);
+    bool finalSettleFrame = (isFading && fadeT >= 1.0) || settleWaves;
     std::unordered_map<WORD, bool> devBusy;
+    std::unordered_set<DWORD> updatedLights;
 
     conf->modifyProfile.lockRead();
     for (const auto& ls : conf->activeProfile->lightsets) {
         if (ls.color.empty()) continue;
         byte effType = ls.color[0].type;
-        if (effType == AlienFX_SDK::AlienFX_A_Color && !isFading) continue;
+        if (effType == AlienFX_SDK::AlienFX_A_Color && !isFading && !needWavePass) continue;
 
         AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(ls.group);
         if (!grp || grp->lights.empty()) continue;
@@ -1517,29 +1660,9 @@ void CockpitBridge::StepAnimatedEffects() {
                 waterBase.b = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1.b : 255;
                 AlienFX_SDK::Afx_action dark{ 0 };
                 frame = LerpColor(dark, waterBase, shimmer);
-
-                double waveEnergy = 0.0;
-                for (const auto& drop : dropsSnapshot) {
-                    double ageSec = static_cast<double>(nowMs - drop.startMs) / 1000.0;
-                    if (ageSec < 0.0 || ageSec > 1.85) continue;
-                    double dist = std::hypot((nx - drop.x) * 1.85, (ny - drop.y));
-                    double radius = ageSec * (0.72 + tNorm * 0.85);
-                    double env = 1.0 - std::clamp(ageSec / 1.85, 0.0, 1.0);
-                    env *= env;
-                    double ring1 = std::exp(-((dist - radius) * (dist - radius)) / 0.032);
-                    double ring2 = (radius > 0.28)
-                        ? 0.45 * std::exp(-((dist - (radius - 0.28)) * (dist - (radius - 0.28))) / 0.025)
-                        : 0.0;
-                    double splash = (ageSec < 0.25 && dist < 0.22) ? (1.0 - ageSec / 0.25) * (1.0 - dist / 0.22) : 0.0;
-                    waveEnergy += (ring1 + ring2 + splash) * env;
-                }
-                if (waveEnergy > 0.001) {
-                    AlienFX_SDK::Afx_action crest{};
-                    crest.type = AlienFX_SDK::AlienFX_A_Color;
-                    crest.r = 165;
-                    crest.g = 248;
-                    crest.b = 255;
-                    frame = LerpColor(frame, crest, std::clamp(waveEnergy, 0.0, 1.0));
+                if (!hasDrops && !dropsSnapshot.empty()) {
+                    double we = computeWaveEnergy(nx, ny, tNorm);
+                    if (we > 0.002) frame = LerpColor(frame, waveCrest, we);
                 }
             } else if (effType == AlienFX_SDK::AlienFX_A_Breathing) {
                 double k = 0.05 + 0.95 * (0.5 - 0.5 * std::cos(angle));
@@ -1564,12 +1687,20 @@ void CockpitBridge::StepAnimatedEffects() {
                 frame.type = AlienFX_SDK::AlienFX_A_Color;
             }
 
+            if (hasDrops) {
+                double we = computeWaveEnergy(nx, ny, 0.5);
+                if (we > 0.002) {
+                    frame = LerpColor(frame, waveCrest, we);
+                }
+            }
+
             if (isFading && fadeT < 1.0) {
                 auto pIt = g_crossfade.prevColors.find(gl.lgh);
                 AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
                 frame = LerpColor(prev, frame, fadeT);
             }
 
+            updatedLights.insert(gl.lgh);
             g_lastSentRgb[gl.lgh] = frame;
             std::vector<AlienFX_SDK::Afx_action> acts{ frame };
             fxhl->SetLight(gl.lgh, &acts);
@@ -1577,6 +1708,55 @@ void CockpitBridge::StepAnimatedEffects() {
         }
     }
     conf->modifyProfile.unlockRead();
+
+    if (needWavePass) {
+        for (const auto& dev : conf->afx_dev.fxdevs) {
+            if (!dev.present || !dev.dev) continue;
+            if (dev.dev->version != AlienFX_SDK::API_V5 &&
+                dev.dev->version != AlienFX_SDK::API_ACPI) {
+                continue;
+            }
+            auto busyIt = devBusy.find(dev.pid);
+            if (busyIt == devBusy.end()) {
+                fxhl->modifyQuery.lockRead();
+                auto qIt = fxhl->devLightQuery.find(dev.pid);
+                size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
+                fxhl->modifyQuery.unlockRead();
+                if (qSize > 0 && hEvt) SetEvent(hEvt);
+                bool skipDev = (!finalSettleFrame && qSize > 12) || (qSize > 250);
+                busyIt = devBusy.emplace(dev.pid, skipDev).first;
+            }
+            if (busyIt->second) continue;
+
+            for (const auto& l : dev.lights) {
+                if (l.flags & ALIENFX_FLAG_POWER) continue;
+                DWORD lgh = MAKELONG(dev.pid, l.lightid);
+                if (updatedLights.count(lgh)) continue;
+
+                double nx = 0.0, ny = 0.0;
+                GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
+                AlienFX_SDK::Afx_action frame{ 0 };
+                frame.type = AlienFX_SDK::AlienFX_A_Color;
+                if (hasDrops) {
+                    double we = computeWaveEnergy(nx, ny, 0.5);
+                    if (we > 0.002) {
+                        frame = LerpColor(frame, waveCrest, we);
+                    }
+                }
+                if (isFading && fadeT < 1.0) {
+                    auto pIt = g_crossfade.prevColors.find(lgh);
+                    AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
+                    frame = LerpColor(prev, frame, fadeT);
+                }
+                g_lastSentRgb[lgh] = frame;
+                std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+                fxhl->SetLight(lgh, &acts);
+                anyUpdated = true;
+            }
+        }
+    }
+    s_hadActiveDrops = hasDrops;
 
     if (anyUpdated) {
         fxhl->QueryUpdate();
@@ -1586,4 +1766,3 @@ void CockpitBridge::StepAnimatedEffects() {
         g_crossfade.prevColors.clear();
     }
 }
-

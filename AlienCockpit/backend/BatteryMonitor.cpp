@@ -13,6 +13,7 @@ extern "C" {
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "cfgmgr32.lib")
@@ -35,28 +36,47 @@ static std::string WideToUtf8(const std::wstring& ws) {
     return out;
 }
 
-static std::string ClassifyDeviceType(const std::string& name) {
-    std::string lower = name;
-    std::transform(lower.begin(), lower.end(), lower.begin(),
+static std::string ToLowerAscii(const std::string& s) {
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(),
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+static std::string ClassifyDeviceType(const std::string& name) {
+    std::string lower = ToLowerAscii(name);
     if (lower.find("mouse") != std::string::npos || lower.find("raton") != std::string::npos ||
         lower.find("aw6") != std::string::npos || lower.find("aw7") != std::string::npos ||
-        lower.find("aw3") != std::string::npos || lower.find("pro wireless") != std::string::npos)
+        lower.find("aw3") != std::string::npos || lower.find("pro wireless") != std::string::npos ||
+        lower.find("superlight") != std::string::npos)
         return "mouse";
     if (lower.find("keyboard") != std::string::npos || lower.find("teclado") != std::string::npos ||
         lower.find("aw5") != std::string::npos || lower.find("aw9") != std::string::npos ||
         lower.find("aw4") != std::string::npos)
         return "keyboard";
+    if (lower.find("xbox") != std::string::npos || lower.find("dualsense") != std::string::npos ||
+        lower.find("dualshock") != std::string::npos || lower.find("controller") != std::string::npos ||
+        lower.find("gamepad") != std::string::npos || lower.find("mando") != std::string::npos ||
+        lower.find("joystick") != std::string::npos || lower.find("joy-con") != std::string::npos ||
+        lower.find("8bitdo") != std::string::npos)
+        return "controller";
     if (lower.find("headset") != std::string::npos || lower.find("audio") != std::string::npos ||
         lower.find("headphone") != std::string::npos || lower.find("aw920") != std::string::npos ||
-        lower.find("aw720h") != std::string::npos)
+        lower.find("aw720h") != std::string::npos || lower.find("astro") != std::string::npos ||
+        lower.find("a50") != std::string::npos || lower.find("a30") != std::string::npos ||
+        lower.find("a20") != std::string::npos || lower.find("arctis") != std::string::npos ||
+        lower.find("airpods") != std::string::npos || lower.find("earbud") != std::string::npos ||
+        lower.find("buds") != std::string::npos || lower.find("audifono") != std::string::npos)
         return "headset";
     return "peripheral";
 }
 
 static void AddUniqueBattery(std::vector<BatteryDeviceInfo>& result, const BatteryDeviceInfo& info) {
-    for (const auto& existing : result) {
-        if (existing.name == info.name && existing.percentage == info.percentage) {
+    for (auto& existing : result) {
+        if (ToLowerAscii(existing.name) == ToLowerAscii(info.name)) {
+            if (existing.percentage < 0 && info.percentage >= 0) {
+                existing = info;
+            }
             return;
         }
     }
@@ -153,14 +173,111 @@ static bool TryReadHidBatteryReport(HANDLE hDev, PHIDP_PREPARSED_DATA preparsed,
     return false;
 }
 
-static std::string ToLowerAscii(const std::string& s) {
-    std::string out = s;
-    std::transform(out.begin(), out.end(), out.begin(),
-        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return out;
+static bool OverlappedReadOnce(HANDLE hDev, std::vector<BYTE>& inBuf, DWORD timeoutMs) {
+    if (hDev == INVALID_HANDLE_VALUE || inBuf.empty()) return false;
+    HANDLE hEvt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!hEvt) return false;
+
+    OVERLAPPED ov{};
+    ov.hEvent = hEvt;
+    DWORD readBytes = 0;
+    BOOL ok = ReadFile(hDev, inBuf.data(), static_cast<DWORD>(inBuf.size()), &readBytes, &ov);
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(hEvt, timeoutMs) == WAIT_OBJECT_0) {
+            ok = GetOverlappedResult(hDev, &ov, &readBytes, FALSE);
+        } else {
+            CancelIoEx(hDev, &ov);
+            ok = FALSE;
+        }
+    }
+    CloseHandle(hEvt);
+    return (ok != FALSE) && (readBytes > 0);
 }
 
-static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
+static bool OverlappedWriteAndRead(HANDLE hDev, const std::vector<BYTE>& outBuf, std::vector<BYTE>& inBuf, DWORD timeoutMs) {
+    if (hDev == INVALID_HANDLE_VALUE || outBuf.empty() || inBuf.empty()) return false;
+    HANDLE hEvt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!hEvt) return false;
+
+    OVERLAPPED ovW{};
+    ovW.hEvent = hEvt;
+    DWORD written = 0;
+    BOOL wOk = WriteFile(hDev, outBuf.data(), static_cast<DWORD>(outBuf.size()), &written, &ovW);
+    if (!wOk && GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(hEvt, timeoutMs) == WAIT_OBJECT_0) {
+            wOk = GetOverlappedResult(hDev, &ovW, &written, FALSE);
+        } else {
+            CancelIoEx(hDev, &ovW);
+            wOk = FALSE;
+        }
+    }
+    if (!wOk) {
+        CloseHandle(hEvt);
+        return false;
+    }
+
+    ResetEvent(hEvt);
+    OVERLAPPED ovR{};
+    ovR.hEvent = hEvt;
+    DWORD readBytes = 0;
+    BOOL rOk = ReadFile(hDev, inBuf.data(), static_cast<DWORD>(inBuf.size()), &readBytes, &ovR);
+    if (!rOk && GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(hEvt, timeoutMs) == WAIT_OBJECT_0) {
+            rOk = GetOverlappedResult(hDev, &ovR, &readBytes, FALSE);
+        } else {
+            CancelIoEx(hDev, &ovR);
+            rOk = FALSE;
+        }
+    }
+    CloseHandle(hEvt);
+    return (rOk != FALSE) && (readBytes > 0);
+}
+
+static int ExtractBatteryPercentAndCharging(const std::vector<BYTE>& buf, bool isPrimax, bool& chargingOut) {
+    chargingOut = false;
+    if (buf.size() < 6) return -1;
+    bool allZero = std::all_of(buf.begin() + 1, buf.end(), [](BYTE b) { return b == 0; });
+    if (allZero) return -1;
+
+    if (isPrimax) {
+        // Primax / AlienFX V7 (0x40 0x03 status response)
+        if (buf[1] == 0x40 || buf[0] == 0x40) {
+            const size_t base = (buf[0] == 0x40) ? 0 : 1;
+            if (base + 6 < buf.size()) {
+                BYTE st = buf[base + 3];
+                if (st == 0x01 || st == 0x08) chargingOut = true;
+            }
+            const size_t idxList[] = { base + 4, base + 5, base + 6, base + 7 };
+            for (size_t idx : idxList) {
+                if (idx < buf.size() && buf[idx] >= 1 && buf[idx] <= 100) {
+                    return static_cast<int>(buf[idx]);
+                }
+            }
+        }
+        return -1;
+    }
+
+    // Darfon 0x0D62:0x9ABC telemetry (echoes 0x20 or command in [1]/[2])
+    const size_t candIdx[] = { 4, 5, 6, 3 };
+    if (buf[1] == 0x20 || buf[2] == 0x20 || buf[2] != 0 || buf[3] != 0) {
+        if (buf[3] == 0x01 || buf[7] == 0x01) chargingOut = true;
+        for (size_t idx : candIdx) {
+            if (idx < buf.size() && buf[idx] >= 1 && buf[idx] <= 100) {
+                return static_cast<int>(buf[idx]);
+            }
+        }
+        if (buf[1] == 0x20) {
+            for (size_t idx : candIdx) {
+                if (idx < buf.size() && buf[idx] <= 100) {
+                    return static_cast<int>(buf[idx]);
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+static bool QueryAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
     GUID hidGuid{};
     HidD_GetHidGuid(&hidGuid);
     HDEVINFO hHidInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -168,7 +285,9 @@ static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
 
     struct CandidatePath {
         std::wstring path;
-        int priority;
+        WORD vid = 0;
+        WORD pid = 0;
+        int priority = 5;
     };
     std::vector<CandidatePath> candidates;
 
@@ -186,13 +305,19 @@ static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
             continue;
 
         std::string pathLower = ToLowerAscii(WideToUtf8(detail->DevicePath));
-        if (pathLower.find("vid_0d62") == std::string::npos || pathLower.find("pid_9abc") == std::string::npos)
+        bool isDarfon610 = (pathLower.find("vid_0d62") != std::string::npos &&
+            (pathLower.find("pid_9abc") != std::string::npos || pathLower.find("pid_a610") != std::string::npos));
+        bool isPrimax610 = (pathLower.find("vid_0461") != std::string::npos &&
+            (pathLower.find("pid_4ec0") != std::string::npos || pathLower.find("pid_4ec1") != std::string::npos));
+        if (!isDarfon610 && !isPrimax610)
             continue;
 
-        int prio = 2;
-        if (pathLower.find("col02") != std::string::npos) prio = 0;
-        else if (pathLower.find("col01") != std::string::npos) prio = 1;
-        candidates.push_back({ detail->DevicePath, prio });
+        int prio = isPrimax610 ? 0 : 3;
+        if (isDarfon610) {
+            if (pathLower.find("col02") != std::string::npos) prio = 1;
+            else if (pathLower.find("col01") != std::string::npos) prio = 2;
+        }
+        candidates.push_back({ detail->DevicePath, static_cast<WORD>(isPrimax610 ? 0x0461 : 0x0D62), 0, prio });
     }
     SetupDiDestroyDeviceInfoList(hHidInfo);
 
@@ -206,8 +331,9 @@ static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
 
     for (const auto& cand : candidates) {
         HANDLE hDev = CreateFileW(cand.path.c_str(), GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-        if (hDev == INVALID_HANDLE_VALUE) {
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        bool canRW = (hDev != INVALID_HANDLE_VALUE);
+        if (!canRW) {
             hDev = CreateFileW(cand.path.c_str(), 0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
         }
@@ -215,7 +341,13 @@ static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
 
         HIDD_ATTRIBUTES attrs{};
         attrs.Size = sizeof(HIDD_ATTRIBUTES);
-        if (!HidD_GetAttributes(hDev, &attrs) || attrs.VendorID != 0x0D62 || attrs.ProductID != 0x9ABC) {
+        if (!HidD_GetAttributes(hDev, &attrs)) {
+            CloseHandle(hDev);
+            continue;
+        }
+        bool isDarfon = (attrs.VendorID == 0x0D62 && (attrs.ProductID == 0x9ABC || attrs.ProductID == 0xA610));
+        bool isPrimax = (attrs.VendorID == 0x0461 && (attrs.ProductID == 0x4EC0 || attrs.ProductID == 0x4EC1));
+        if (!isDarfon && !isPrimax) {
             CloseHandle(hDev);
             continue;
         }
@@ -226,83 +358,129 @@ static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
             if (!pName.empty()) deviceLabel = pName;
         }
 
-        ULONG capLen = 0;
+        HIDP_CAPS caps{};
         PHIDP_PREPARSED_DATA preparsed = nullptr;
         if (HidD_GetPreparsedData(hDev, &preparsed) && preparsed) {
-            HIDP_CAPS caps{};
-            if (HidP_GetCaps(preparsed, &caps) == HIDP_STATUS_SUCCESS && caps.FeatureReportByteLength > 0) {
-                capLen = caps.FeatureReportByteLength;
-            }
+            HidP_GetCaps(preparsed, &caps);
             HidD_FreePreparsedData(preparsed);
         }
 
-        std::vector<ULONG> lengths;
-        if (capLen > 0) lengths.push_back(capLen);
-        if (capLen != 65) lengths.push_back(65);
-        if (capLen != 33) lengths.push_back(33);
+        // Skip OS pointer-only collection unless no vendor collection exists
+        if (caps.UsagePage == 0x01 && caps.Usage == 0x02) {
+            CloseHandle(hDev);
+            continue;
+        }
 
-        const BYTE reportIds[] = { 0x22, 0x02 };
         bool gotLive = false;
+        int pct = -1;
+        bool charging = false;
 
-        for (BYTE rid : reportIds) {
-            for (ULONG repLen : lengths) {
-                if (repLen < 7) continue;
-
-                std::vector<BYTE> outBuf(repLen, 0);
-                outBuf[0] = rid;
-                outBuf[1] = 0x20;
-                if (!HidD_SetFeature(hDev, outBuf.data(), repLen)) {
-                    continue;
-                }
-
-                std::vector<BYTE> inBuf(repLen, 0);
-                inBuf[0] = rid;
-                if (!HidD_GetFeature(hDev, inBuf.data(), repLen)) {
-                    continue;
-                }
-
-                bool allZero = std::all_of(inBuf.begin() + 1, inBuf.end(),
-                    [](BYTE b) { return b == 0; });
-                if (allZero) {
-                    sawSleep = true;
-                    continue;
-                }
-
-                int pct = -1;
-                const size_t candIdx[] = { 4, 5, 6 };
-                for (size_t idx : candIdx) {
-                    if (idx < inBuf.size() && inBuf[idx] > 0 && inBuf[idx] <= 100) {
-                        pct = static_cast<int>(inBuf[idx]);
+        // 1. Overlapped Output/Input Interrupt Pipe (used by Primax 0x0461:0x4EC0 & Dongle vendor pipe)
+        if (canRW && caps.OutputReportByteLength > 0 && caps.InputReportByteLength > 0) {
+            DWORD outLen = caps.OutputReportByteLength;
+            DWORD inLen = caps.InputReportByteLength;
+            struct CmdProbe { BYTE b0, b1, b2, b3, b4; };
+            const CmdProbe cmds[] = {
+                { 0x00, 0x40, 0x03, 0x01, 0x00 },
+                { 0x40, 0x03, 0x01, 0x00, 0x01 },
+                { 0x00, 0x40, 0x02, 0x00, 0x00 },
+                { 0x22, 0x20, 0x00, 0x00, 0x00 },
+                { 0x02, 0x20, 0x00, 0x00, 0x00 }
+            };
+            for (const auto& cmd : cmds) {
+                if ((cmd.b0 == 0x22 || cmd.b0 == 0x02) && !isDarfon) continue;
+                if ((cmd.b0 == 0x40 || cmd.b1 == 0x40) && !isPrimax && outLen < 16) continue;
+                std::vector<BYTE> outBuf(outLen, 0);
+                outBuf[0] = cmd.b0;
+                if (outLen > 1) outBuf[1] = cmd.b1;
+                if (outLen > 2) outBuf[2] = cmd.b2;
+                if (outLen > 3) outBuf[3] = cmd.b3;
+                if (outLen > 4) outBuf[4] = cmd.b4;
+                std::vector<BYTE> inBuf(inLen, 0);
+                if (OverlappedWriteAndRead(hDev, outBuf, inBuf, 45)) {
+                    pct = ExtractBatteryPercentAndCharging(inBuf, isPrimax || cmd.b0 == 0x40 || cmd.b1 == 0x40, charging);
+                    if (pct >= 0 && pct <= 100) {
+                        gotLive = true;
                         break;
                     }
+                    if (std::all_of(inBuf.begin() + 1, inBuf.end(), [](BYTE b) { return b == 0; })) {
+                        sawSleep = true;
+                    }
                 }
-                if (pct < 0 && (inBuf[1] == 0x20 || inBuf[2] != 0 || inBuf[3] != 0)) {
-                    for (size_t idx : candIdx) {
-                        if (idx < inBuf.size() && inBuf[idx] <= 100) {
-                            pct = static_cast<int>(inBuf[idx]);
+            }
+        }
+
+        // 2. Output + Input Control Transfer (HidD_SetOutputReport / HidD_GetInputReport)
+        if (!gotLive && caps.OutputReportByteLength >= 8 && caps.InputReportByteLength >= 8) {
+            const BYTE rids[] = { 0x22, 0x02, 0x00 };
+            for (BYTE rid : rids) {
+                std::vector<BYTE> outBuf(caps.OutputReportByteLength, 0);
+                outBuf[0] = rid;
+                if (rid == 0x00 && isPrimax) {
+                    outBuf[1] = 0x40; outBuf[2] = 0x03; outBuf[3] = 0x01;
+                } else {
+                    outBuf[1] = 0x20;
+                }
+                if (HidD_SetOutputReport(hDev, outBuf.data(), static_cast<ULONG>(outBuf.size()))) {
+                    std::vector<BYTE> inBuf(caps.InputReportByteLength, 0);
+                    inBuf[0] = rid;
+                    if (HidD_GetInputReport(hDev, inBuf.data(), static_cast<ULONG>(inBuf.size()))) {
+                        pct = ExtractBatteryPercentAndCharging(inBuf, isPrimax, charging);
+                        if (pct >= 0 && pct <= 100) {
+                            gotLive = true;
                             break;
                         }
                     }
                 }
-
-                if (pct >= 0 && pct <= 100) {
-                    BatteryDeviceInfo info;
-                    info.id = "aw610m-darfon";
-                    info.name = deviceLabel;
-                    info.type = "mouse";
-                    info.percentage = pct;
-                    info.charging = false;
-                    info.acOnline = false;
-                    AddUniqueBattery(result, info);
-                    gotLive = true;
-                    break;
-                }
             }
-            if (gotLive) break;
+        }
+
+        // 3. Feature Report Transfer (HidD_SetFeature / HidD_GetFeature)
+        if (!gotLive) {
+            std::vector<ULONG> lengths;
+            if (caps.FeatureReportByteLength > 0) lengths.push_back(caps.FeatureReportByteLength);
+            if (caps.FeatureReportByteLength != 65) lengths.push_back(65);
+            if (caps.FeatureReportByteLength != 33) lengths.push_back(33);
+
+            const BYTE reportIds[] = { 0x22, 0x02, 0x00 };
+            for (BYTE rid : reportIds) {
+                for (ULONG repLen : lengths) {
+                    if (repLen < 7) continue;
+                    std::vector<BYTE> outBuf(repLen, 0);
+                    outBuf[0] = rid;
+                    outBuf[1] = (rid == 0x00 && isPrimax) ? 0x40 : 0x20;
+                    if (!HidD_SetFeature(hDev, outBuf.data(), repLen)) continue;
+
+                    std::vector<BYTE> inBuf(repLen, 0);
+                    inBuf[0] = rid;
+                    if (!HidD_GetFeature(hDev, inBuf.data(), repLen)) continue;
+
+                    if (std::all_of(inBuf.begin() + 1, inBuf.end(), [](BYTE b) { return b == 0; })) {
+                        sawSleep = true;
+                        continue;
+                    }
+                    pct = ExtractBatteryPercentAndCharging(inBuf, isPrimax, charging);
+                    if (pct >= 0 && pct <= 100) {
+                        gotLive = true;
+                        break;
+                    }
+                }
+                if (gotLive) break;
+            }
         }
 
         CloseHandle(hDev);
-        if (gotLive) return true;
+        if (gotLive && pct >= 0) {
+            BatteryDeviceInfo info;
+            info.id = isPrimax ? "aw610m-primax" : "aw610m-darfon";
+            info.name = deviceLabel;
+            info.type = "mouse";
+            info.percentage = pct;
+            info.charging = charging || isPrimax;
+            info.acOnline = isPrimax;
+            AddUniqueBattery(result, info);
+            return true;
+        }
     }
 
     if (sawSleep) {
@@ -318,6 +496,227 @@ static bool QueryDarfonAW610MBattery(std::vector<BatteryDeviceInfo>& result) {
     }
 
     return false;
+}
+
+static void QueryXInputBatteries(std::vector<BatteryDeviceInfo>& result) {
+    HMODULE hXInput = LoadLibraryW(L"Xinput1_4.dll");
+    if (!hXInput) hXInput = LoadLibraryW(L"Xinput9_1_0.dll");
+    if (!hXInput) return;
+
+    struct XInputBattInfo { BYTE BatteryType; BYTE BatteryLevel; };
+    struct XInputGamepad { WORD wButtons; BYTE bLeftTrigger; BYTE bRightTrigger; SHORT sThumbLX; SHORT sThumbLY; SHORT sThumbRX; SHORT sThumbRY; };
+    struct XInputState { DWORD dwPacketNumber; XInputGamepad Gamepad; };
+
+    using FnGetState = DWORD(WINAPI*)(DWORD, XInputState*);
+    using FnGetBattery = DWORD(WINAPI*)(DWORD, BYTE, XInputBattInfo*);
+
+    auto pGetState = reinterpret_cast<FnGetState>(GetProcAddress(hXInput, "XInputGetState"));
+    auto pGetBattery = reinterpret_cast<FnGetBattery>(GetProcAddress(hXInput, "XInputGetBatteryInformation"));
+
+    if (pGetState && pGetBattery) {
+        for (DWORD userIdx = 0; userIdx < 4; ++userIdx) {
+            XInputState st{};
+            if (pGetState(userIdx, &st) != ERROR_SUCCESS) continue;
+
+            XInputBattInfo bi{};
+            if (pGetBattery(userIdx, 0x00 /*GAMEPAD*/, &bi) == ERROR_SUCCESS && bi.BatteryType != 0x00) {
+                int pct = -1;
+                bool charging = false;
+                if (bi.BatteryType == 0x01 /*WIRED*/) {
+                    pct = 100;
+                    charging = true;
+                } else if (bi.BatteryType == 0x02 || bi.BatteryType == 0x03) {
+                    switch (bi.BatteryLevel) {
+                    case 0: pct = 10; break;
+                    case 1: pct = 30; break;
+                    case 2: pct = 65; break;
+                    case 3: pct = 100; break;
+                    default: pct = -1; break;
+                    }
+                }
+                if (pct >= 0) {
+                    BatteryDeviceInfo info;
+                    info.id = "xinput-pad-" + std::to_string(userIdx);
+                    info.name = "Xbox Controller #" + std::to_string(userIdx + 1);
+                    info.type = "controller";
+                    info.percentage = pct;
+                    info.charging = charging;
+                    info.acOnline = charging;
+                    AddUniqueBattery(result, info);
+                }
+            }
+
+            XInputBattInfo hi{};
+            if (pGetBattery(userIdx, 0x01 /*HEADSET*/, &hi) == ERROR_SUCCESS &&
+                (hi.BatteryType == 0x02 || hi.BatteryType == 0x03)) {
+                int pct = -1;
+                switch (hi.BatteryLevel) {
+                case 0: pct = 10; break;
+                case 1: pct = 30; break;
+                case 2: pct = 65; break;
+                case 3: pct = 100; break;
+                default: break;
+                }
+                if (pct >= 0) {
+                    BatteryDeviceInfo info;
+                    info.id = "xinput-hs-" + std::to_string(userIdx);
+                    info.name = "Xbox Headset #" + std::to_string(userIdx + 1);
+                    info.type = "headset";
+                    info.percentage = pct;
+                    AddUniqueBattery(result, info);
+                }
+            }
+        }
+    }
+
+    FreeLibrary(hXInput);
+}
+
+static void QuerySonyAndHidppBatteries(std::vector<BatteryDeviceInfo>& result) {
+    GUID hidGuid{};
+    HidD_GetHidGuid(&hidGuid);
+    HDEVINFO hHidInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (hHidInfo == INVALID_HANDLE_VALUE) return;
+
+    SP_DEVICE_INTERFACE_DATA ifData{};
+    ifData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+    for (DWORD idx = 0; SetupDiEnumDeviceInterfaces(hHidInfo, nullptr, &hidGuid, idx, &ifData); ++idx) {
+        DWORD reqLen = 0;
+        SetupDiGetDeviceInterfaceDetailW(hHidInfo, &ifData, nullptr, 0, &reqLen, nullptr);
+        if (!reqLen) continue;
+        std::vector<BYTE> detailBuf(reqLen);
+        auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(detailBuf.data());
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+        SP_DEVINFO_DATA devData{};
+        devData.cbSize = sizeof(SP_DEVINFO_DATA);
+        if (!SetupDiGetDeviceInterfaceDetailW(hHidInfo, &ifData, detail, reqLen, nullptr, &devData))
+            continue;
+
+        std::string pathLow = ToLowerAscii(WideToUtf8(detail->DevicePath));
+        bool isSony = (pathLow.find("vid_054c") != std::string::npos);
+        bool isLogiAstro = (pathLow.find("vid_046d") != std::string::npos || pathLow.find("vid_9886") != std::string::npos);
+        if (!isSony && !isLogiAstro) continue;
+
+        HANDLE hDev = CreateFileW(detail->DevicePath, GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        bool canRW = (hDev != INVALID_HANDLE_VALUE);
+        if (!canRW) {
+            hDev = CreateFileW(detail->DevicePath, GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+        }
+        if (hDev == INVALID_HANDLE_VALUE) continue;
+
+        HIDD_ATTRIBUTES attrs{ sizeof(HIDD_ATTRIBUTES) };
+        HIDP_CAPS caps{};
+        PHIDP_PREPARSED_DATA prep = nullptr;
+        bool hasAttrs = HidD_GetAttributes(hDev, &attrs) != FALSE;
+        bool hasCaps = HidD_GetPreparsedData(hDev, &prep) && prep && (HidP_GetCaps(prep, &caps) == HIDP_STATUS_SUCCESS);
+        if (prep) HidD_FreePreparsedData(prep);
+        if (!hasAttrs || !hasCaps) {
+            CloseHandle(hDev);
+            continue;
+        }
+
+        wchar_t prodW[128]{};
+        std::string devName = ResolveParentUsbName(devData.DevInst);
+        if (HidD_GetProductString(hDev, prodW, sizeof(prodW)) && prodW[0] != L'\0') {
+            devName = WideToUtf8(prodW);
+        }
+
+        // Sony DualSense (0x0CE6, 0x0DF2) & DualShock 4 (0x05C4, 0x09CC, 0x0BA0)
+        if (attrs.VendorID == 0x054C && caps.InputReportByteLength >= 64) {
+            bool isDS5 = (attrs.ProductID == 0x0CE6 || attrs.ProductID == 0x0DF2);
+            bool isDS4 = (attrs.ProductID == 0x05C4 || attrs.ProductID == 0x09CC || attrs.ProductID == 0x0BA0);
+            if (isDS5 || isDS4) {
+                bool isBt = (caps.InputReportByteLength > 64);
+                std::vector<BYTE> rpt(caps.InputReportByteLength, 0);
+                if (isDS5 && isBt) {
+                    std::vector<BYTE> feat(caps.FeatureReportByteLength > 0 ? caps.FeatureReportByteLength : 64, 0);
+                    feat[0] = 0x05;
+                    HidD_GetFeature(hDev, feat.data(), static_cast<ULONG>(feat.size()));
+                    rpt[0] = 0x31;
+                } else {
+                    rpt[0] = isBt ? 0x11 : 0x01;
+                }
+
+                if (OverlappedReadOnce(hDev, rpt, 45)) {
+                    int pct = -1;
+                    bool charging = false;
+                    if (isDS5) {
+                        size_t off = (rpt[0] == 0x31) ? 54 : 53;
+                        if (off < rpt.size()) {
+                            BYTE raw = rpt[off] & 0x0F;
+                            BYTE st = (rpt[off] >> 4) & 0x0F;
+                            charging = (st == 0x01);
+                            pct = (st == 0x02) ? 100 : std::clamp(static_cast<int>(raw) * 10 + 5, 5, 100);
+                        }
+                    } else {
+                        size_t off = (rpt[0] == 0x11) ? 32 : 30;
+                        if (off < rpt.size()) {
+                            charging = (rpt[off] & 0x10) != 0;
+                            BYTE raw = rpt[off] & 0x0F;
+                            pct = charging ? std::min(100, static_cast<int>(raw) * 10) : std::clamp(static_cast<int>(raw) * 10 + 5, 5, 100);
+                        }
+                    }
+                    if (pct >= 0) {
+                        if (devName.empty()) devName = isDS5 ? "Sony DualSense Controller" : "Sony DualShock 4 Controller";
+                        BatteryDeviceInfo info;
+                        info.id = "sony-" + std::to_string(attrs.ProductID);
+                        info.name = devName;
+                        info.type = "controller";
+                        info.percentage = pct;
+                        info.charging = charging;
+                        info.acOnline = !isBt;
+                        AddUniqueBattery(result, info);
+                    }
+                }
+            }
+        }
+        // Logitech / Astro HID++ 2.0 (VID_046D, VID_9886)
+        else if ((attrs.VendorID == 0x046D || attrs.VendorID == 0x9886) &&
+                 canRW && caps.UsagePage == 0xFF00 &&
+                 caps.OutputReportByteLength >= 20 && caps.InputReportByteLength >= 20) {
+            const BYTE devIndices[] = { 0xFF, 0x01, 0x02 };
+            const WORD features[] = { 0x1004, 0x1000 };
+            for (BYTE dIdx : devIndices) {
+                bool foundForDev = false;
+                for (WORD featId : features) {
+                    std::vector<BYTE> req(caps.OutputReportByteLength, 0);
+                    std::vector<BYTE> resp(caps.InputReportByteLength, 0);
+                    req[0] = 0x11; req[1] = dIdx; req[2] = 0x00; req[3] = 0x0F;
+                    req[4] = static_cast<BYTE>(featId >> 8);
+                    req[5] = static_cast<BYTE>(featId & 0xFF);
+                    if (!OverlappedWriteAndRead(hDev, req, resp, 25)) continue;
+                    if (resp[0] == 0x11 && resp[1] == dIdx && resp[2] == 0x00 && resp[4] > 0) {
+                        BYTE fIdx = resp[4];
+                        std::fill(req.begin(), req.end(), 0);
+                        std::fill(resp.begin(), resp.end(), 0);
+                        req[0] = 0x11; req[1] = dIdx; req[2] = fIdx;
+                        req[3] = (featId == 0x1004) ? 0x1F : 0x0F;
+                        if (OverlappedWriteAndRead(hDev, req, resp, 25) && resp[0] == 0x11 && resp[1] == dIdx && resp[2] == fIdx) {
+                            int pct = (resp[4] <= 100) ? static_cast<int>(resp[4]) : -1;
+                            if (pct >= 0) {
+                                bool charging = (featId == 0x1004) ? (resp[6] >= 1 && resp[6] <= 4) : (resp[6] == 1 || resp[6] == 3);
+                                if (devName.empty()) devName = (attrs.VendorID == 0x9886) ? "Astro Wireless Headset" : "Logitech Wireless Device";
+                                BatteryDeviceInfo info;
+                                info.id = "hidpp-" + std::to_string(attrs.VendorID) + "-" + std::to_string(attrs.ProductID) + "-" + std::to_string(dIdx);
+                                info.name = devName;
+                                info.type = ClassifyDeviceType(devName);
+                                info.percentage = pct;
+                                info.charging = charging;
+                                AddUniqueBattery(result, info);
+                                foundForDev = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (foundForDev) break;
+            }
+        }
+        CloseHandle(hDev);
+    }
+    SetupDiDestroyDeviceInfoList(hHidInfo);
 }
 
 std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
@@ -339,10 +738,16 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
         }
     }
 
-    // 2. Darfon / Alienware AW610M Wireless Mouse proprietary Feature Report telemetry (VID_0D62 & PID_9ABC)
-    QueryDarfonAW610MBattery(result);
+    // 2. Alienware AW610M Wireless / Wired Mouse telemetry (Darfon 0x0D62:0x9ABC & Primax 0x0461:0x4EC0)
+    QueryAW610MBattery(result);
 
-    // 3. Windows Battery Class Devices (catches HID Battery Minidriver / BLE / Wireless Receiver batteries)
+    // 3. Xbox Controllers & Headsets via XInput
+    QueryXInputBatteries(result);
+
+    // 4. Sony DualSense / DualShock 4 & Logitech / Astro HID++ Wireless Devices
+    QuerySonyAndHidppBatteries(result);
+
+    // 5. Windows Battery Class Devices (catches HID Battery Minidriver / BLE / Wireless Receiver batteries)
     HDEVINFO hBattInfo = SetupDiGetClassDevsW(&GUID_DEVICE_BATTERY, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
     if (hBattInfo != INVALID_HANDLE_VALUE) {
         SP_DEVICE_INTERFACE_DATA ifData{};
@@ -381,7 +786,6 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
                 if (DeviceIoControl(hBatt, IOCTL_BATTERY_QUERY_INFORMATION, &bqi, sizeof(bqi),
                     &bInfo, sizeof(bInfo), &outBytes, nullptr) && bInfo.FullChargedCapacity > 0) {
 
-                    // Skip main ACPI control method battery if System Battery is already listed
                     bool isMainAcpi = ((bInfo.Capabilities & BATTERY_SYSTEM_BATTERY) != 0) ||
                         (battName.find("ACPI") != std::string::npos) ||
                         (battName.find("Control Method") != std::string::npos);
@@ -414,7 +818,7 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
         SetupDiDestroyDeviceInfoList(hBattInfo);
     }
 
-    // 4. Connected Bluetooth / Wireless PnP Devices with DEVPKEY_Device_BatteryPercentage
+    // 6. Connected Bluetooth / Wireless PnP Devices with DEVPKEY_Device_BatteryPercentage
     HDEVINFO hDevInfo = SetupDiGetClassDevsW(nullptr, nullptr, nullptr, DIGCF_ALLCLASSES | DIGCF_PRESENT);
     if (hDevInfo != INVALID_HANDLE_VALUE) {
         SP_DEVINFO_DATA devInfo{};
@@ -473,7 +877,7 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
         SetupDiDestroyDeviceInfoList(hDevInfo);
     }
 
-    // 5. HID Battery Strength / Power Device Usage (0x06/0x20, 0x85/0x64..0x68) across Input & Feature reports
+    // 7. HID Battery Strength / Power Device Usage (0x06/0x20, 0x85/0x64..0x68) across Input & Feature reports
     GUID hidGuid{};
     HidD_GetHidGuid(&hidGuid);
     HDEVINFO hHidInfo = SetupDiGetClassDevsW(&hidGuid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -493,7 +897,6 @@ std::vector<BatteryDeviceInfo> BatteryMonitor::GetAllBatteries() {
             if (!SetupDiGetDeviceInterfaceDetailW(hHidInfo, &ifData, detail, reqLen, nullptr, &devData))
                 continue;
 
-            // Open with 0 access first (works even for OS-exclusive HID mice/keyboards)
             HANDLE hDev = CreateFileW(detail->DevicePath, 0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
             if (hDev == INVALID_HANDLE_VALUE) {

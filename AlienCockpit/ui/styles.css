@@ -1573,7 +1573,7 @@ html, body {
   flex-shrink: 0;
 }
 
-/* Global Summer Mode Toggle & Active Ocean Canvas */
+/* Global Waves Mode Toggle & Active Ripple Canvas */
 .lighting-header-actions {
   display: flex;
   align-items: center;
@@ -1581,7 +1581,7 @@ html, body {
   flex-wrap: wrap;
 }
 
-.btn-global-summer {
+.btn-global-waves {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1596,12 +1596,12 @@ html, body {
   transition: all 0.18s;
 }
 
-.btn-global-summer:hover {
+.btn-global-waves:hover {
   border-color: #38bdf8;
   color: #e0f7ff;
 }
 
-.btn-global-summer .summer-dot {
+.btn-global-waves .waves-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -1609,22 +1609,22 @@ html, body {
   transition: all 0.18s;
 }
 
-.btn-global-summer.active {
+.btn-global-waves.active {
   background: linear-gradient(135deg, rgba(14, 116, 144, 0.42), rgba(56, 189, 248, 0.26));
   border-color: #38bdf8;
   color: #ffffff;
   box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
 }
 
-.btn-global-summer.active .summer-dot {
+.btn-global-waves.active .waves-dot {
   background: #38bdf8;
   box-shadow: 0 0 8px #38bdf8;
 }
 
-.device-canvas.summer-active .kbd-frame,
-.device-canvas.summer-active .kbd-numpad,
-.device-canvas.summer-active .mouse-stage,
-.device-canvas.summer-active .chassis-stage {
+.device-canvas.waves-active .kbd-frame,
+.device-canvas.waves-active .kbd-numpad,
+.device-canvas.waves-active .mouse-stage,
+.device-canvas.waves-active .chassis-stage {
   box-shadow: inset 0 0 32px rgba(42, 196, 255, 0.14);
   border-color: rgba(56, 189, 248, 0.35);
 }
@@ -1685,4 +1685,54 @@ html, body {
 .batt-card.sleep .batt-pct {
   font-size: 19px;
   color: var(--amber);
+}
+
+.batt-card.low-batt-alert {
+  border-color: rgba(255, 42, 75, 0.65);
+  box-shadow: 0 0 18px rgba(255, 42, 75, 0.18);
+}
+
+.batt-card.low-batt-alert .batt-pct {
+  color: #ff4d6d;
+}
+
+.batt-card.low-batt-alert .batt-fill {
+  background: linear-gradient(90deg, #ff2a4b, #ff6b81);
+}
+
+.hw-diag-panel {
+  margin-top: 4px;
+  background: rgba(5, 8, 16, 0.96);
+  border: 1px solid rgba(0, 240, 255, 0.28);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hw-diag-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--cyan);
+  letter-spacing: 0.4px;
+}
+
+.hw-diag-output {
+  margin: 0;
+  max-height: 190px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #cbd5e1;
+  background: #03050a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }

@@ -5,9 +5,10 @@ const state = {
   devices: [],
   profiles: [],
   activeProfileId: 0,
-  settings: { lightsOn: true, brightness: 255, startWindows: false, startMinimized: true, startupIntro: true, summerMode: false, favorites: [] },
-  summerMode: false,
+  settings: { lightsOn: true, brightness: 255, startWindows: false, startMinimized: true, startupIntro: true, introStyle: 0, wavesMode: false, favorites: [] },
+  wavesMode: false,
   favorites: [],
+  lastSensors: [],
   selectedTargets: new Set(), // canonical key IDs or zone IDs
   selectedHwLights: new Set(), // direct physical LED IDs from Hardware LED Mapper
   selectedDevicePid: 0,
@@ -54,6 +55,10 @@ if (hasWebView) {
       applyFullState(data);
     } else if (data.type === 'telemetry') {
       applyTelemetry(data);
+    } else if (Array.isArray(data.controllers) || data.wmi) {
+      if (typeof renderHardwareDiagnostics === 'function') {
+        renderHardwareDiagnostics(data);
+      }
     }
   });
 }
@@ -419,10 +424,10 @@ function loadSelectionColorAndBrightness(preferredTargetId = null) {
   }
 }
 
-function updateSummerModeUI() {
-  const active = !!state.summerMode;
-  const btn = document.getElementById('btn-global-summer');
-  const txt = document.getElementById('global-summer-state');
+function updateWavesModeUI() {
+  const active = !!state.wavesMode;
+  const btn = document.getElementById('btn-global-waves');
+  const txt = document.getElementById('global-waves-state');
   if (btn) {
     btn.classList.toggle('active', active);
     if (typeof btn.setAttribute === 'function') {
@@ -432,9 +437,9 @@ function updateSummerModeUI() {
   if (txt) {
     txt.textContent = active ? 'ON' : 'OFF';
   }
-  const litAndSummer = active && state.settings.lightsOn !== false;
+  const litAndWaves = active && state.settings.lightsOn !== false;
   document.querySelectorAll('.device-canvas').forEach((canvas) => {
-    canvas.classList.toggle('summer-active', litAndSummer);
+    canvas.classList.toggle('waves-active', litAndWaves);
   });
 }
 
@@ -515,7 +520,7 @@ function triggerVirtualWaterRipple(originEl) {
 function applyKeyVisualStyle(el, color, effect = '') {
   if (!el) return;
   if (color) {
-    if (effect === 'summer') {
+    if (effect === 'summer' || effect === 'waves') {
       el.style.boxShadow = `inset 0 -3px 0 ${color}80, 0 0 10px ${color}44`;
       el.style.borderColor = `${color}66`;
     } else {
@@ -582,7 +587,7 @@ function buildKeyboard() {
         state.selectedHwLights.clear();
         if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
         toggleTargetSelection(key.id);
-        if (state.summerMode) {
+        if (state.wavesMode) {
           triggerVirtualWaterRipple(btn);
         }
       });
@@ -625,7 +630,7 @@ function buildNumpad() {
       state.selectedHwLights.clear();
       if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
       toggleTargetSelection(key.id);
-      if (state.summerMode && key.id !== 'power') {
+      if (state.wavesMode && key.id !== 'power') {
         triggerVirtualWaterRipple(btn);
       }
     });
@@ -863,10 +868,10 @@ function sendPowerButtonColor(colorHex) {
 function syncLightingControlsForView() {
   const isMouse = state.activeView === 'mouse';
   document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
-    const allowed = !isMouse || b.dataset.eff === 'static' || b.dataset.eff === 'breathing';
+    const allowed = !isMouse || b.dataset.eff === 'static' || b.dataset.eff === 'morph';
     b.style.display = allowed ? '' : 'none';
   });
-  if (isMouse && state.effect !== 'static' && state.effect !== 'breathing') {
+  if (isMouse && state.effect !== 'static' && state.effect !== 'morph') {
     state.effect = 'static';
   }
   document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
@@ -928,20 +933,20 @@ function initLightingControls() {
     });
   }
 
-  const btnGlobalSummer = document.getElementById('btn-global-summer');
-  if (btnGlobalSummer) {
-    btnGlobalSummer.addEventListener('click', () => {
-      state.summerMode = !state.summerMode;
-      state.settings.summerMode = state.summerMode;
-      updateSummerModeUI();
+  const btnGlobalWaves = document.getElementById('btn-global-waves');
+  if (btnGlobalWaves) {
+    btnGlobalWaves.addEventListener('click', () => {
+      state.wavesMode = !state.wavesMode;
+      state.settings.wavesMode = state.wavesMode;
+      updateWavesModeUI();
       syncVirtualLightingFromState();
-      sendCommand({ cmd: 'toggleSummer', enabled: state.summerMode });
+      sendCommand({ cmd: 'toggleWaves', enabled: state.wavesMode });
     });
   }
 
   document.querySelectorAll('.eff-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      if (state.activeView === 'mouse' && btn.dataset.eff !== 'static' && btn.dataset.eff !== 'breathing') {
+      if (state.activeView === 'mouse' && btn.dataset.eff !== 'static' && btn.dataset.eff !== 'morph') {
         return;
       }
       state.effect = btn.dataset.eff;
@@ -974,6 +979,7 @@ function initLightingControls() {
 
     if (state.probeActive) {
       state.probeActive = false;
+      state.probeLedId = 0;
       const toggle = document.getElementById('probe-toggle');
       if (toggle) toggle.checked = false;
       updateProbeDeckUI();
@@ -1022,7 +1028,7 @@ function initLightingControls() {
           state.zoneBaseColors.touchpad = baseColor;
           state.zoneBrightnessMap.touchpad = state.zoneBrightness;
           const tpEl = document.getElementById('rgb-touchpad');
-          if (tpEl && !state.summerMode) applyTouchpadVisualStyle(tpEl, visColor);
+          if (tpEl) applyTouchpadVisualStyle(tpEl, visColor);
           const byPid = new Map();
           tpLights.forEach((t) => {
             if (!byPid.has(t.pid)) byPid.set(t.pid, []);
@@ -1056,11 +1062,9 @@ function initLightingControls() {
           if (lids.length > 0 || !isPerKeyKeyboard(kbdDev)) {
             state.keyBaseColors[id] = baseColor;
             state.keyBrightness[id] = state.zoneBrightness;
-            if (!state.summerMode) {
-              state.keyColors[id] = visColor;
-              const keyEl = document.querySelector(`.keycap[data-id="${id}"]`);
-              if (keyEl) applyKeyVisualStyle(keyEl, visColor, state.effect);
-            }
+            state.keyColors[id] = visColor;
+            const keyEl = document.querySelector(`.keycap[data-id="${id}"]`);
+            if (keyEl) applyKeyVisualStyle(keyEl, visColor, state.effect);
             matched.push(...lids);
           }
         }
@@ -1108,7 +1112,7 @@ function initLightingControls() {
         const zKey = getZoneMetaKey(state.activeView, zid);
         state.zoneBaseColors[zKey] = baseColor;
         state.zoneBrightnessMap[zKey] = state.zoneBrightness;
-        if (!state.summerMode) applySvgZoneVisualStyle(zEl, visColor);
+        applySvgZoneVisualStyle(zEl, visColor);
         matched.push(...lids);
       }
     });
@@ -1136,7 +1140,7 @@ function initLightingControls() {
   btnLights.addEventListener('click', () => {
     state.settings.lightsOn = !state.settings.lightsOn;
     updateLightsButton();
-    updateSummerModeUI();
+    updateWavesModeUI();
     syncVirtualLightingFromState();
     sendCommand({ cmd: 'toggleLights', on: state.settings.lightsOn });
   });
@@ -1454,6 +1458,16 @@ function applyTelemetry(data) {
   }
 
   if (data.batteries) {
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const typeBadgeMap = {
+      system: '💻 SYSTEM',
+      mouse: '🖱 MOUSE',
+      keyboard: '⌨ KEYBOARD',
+      headset: '🎧 HEADSET',
+      controller: '🎮 CONTROLLER',
+      bluetooth: '📶 BLUETOOTH',
+      hid: '🔌 HID DEVICE'
+    };
     const grid = document.getElementById('battery-grid');
     grid.innerHTML = '';
     if (data.batteries.length === 0) {
@@ -1462,17 +1476,21 @@ function applyTelemetry(data) {
       data.batteries.forEach((b) => {
         const isSleep = typeof b.percentage !== 'number' || b.percentage < 0;
         const pctWidth = isSleep ? 0 : Math.max(0, Math.min(100, Math.round(b.percentage)));
+        const isLowAlert = !!b.lowBattAlert || (!isSleep && b.type === 'mouse' && pctWidth <= 15 && !b.charging);
         const card = document.createElement('div');
-        card.className = isSleep ? 'batt-card sleep' : 'batt-card';
+        card.className = `batt-card${isSleep ? ' sleep' : ''}${isLowAlert ? ' low-batt-alert' : ''}`;
         const pctLabel = isSleep ? 'Sleep' : `${pctWidth}%`;
+        const typeLabel = typeBadgeMap[b.type] || esc((b.type || 'device').toUpperCase());
         const statusLabel = isSleep
-          ? (b.charging ? '⚡ Charging (Sleep)' : 'Wireless Mouse Asleep (Deep Sleep)')
-          : (b.charging ? '⚡ Charging' : (b.acOnline ? 'Plugged In' : 'On Battery'));
+          ? (b.charging ? '⚡ Charging (Sleep)' : 'Wireless Device Asleep (Deep Sleep)')
+          : (isLowAlert
+            ? '⚠ Low Battery (≤ 15%) — Mouse LEDs set to Red Alert'
+            : (b.charging ? '⚡ Charging' : (b.acOnline ? 'Plugged In' : 'On Battery')));
         card.innerHTML = `
           <div class="batt-top">
             <div>
-              <div class="batt-type">${b.type}</div>
-              <strong>${b.name}</strong>
+              <div class="batt-type">${typeLabel}</div>
+              <strong>${esc(b.name)}</strong>
             </div>
             <div class="batt-pct accent">${pctLabel}</div>
           </div>
@@ -1487,7 +1505,7 @@ function applyTelemetry(data) {
       info.className = 'card';
       info.innerHTML = `
         <div class="batt-type">PERIPHERAL TELEMETRY INFO</div>
-        <p class="hint-text" style="margin-top:6px;">No wireless mouse or peripheral battery detected yet. Ensure your Bluetooth, standard HID, or Darfon 2.4GHz USB dongle (such as AW610M) is connected and awake, then click Scan Devices.</p>
+        <p class="hint-text" style="margin-top:6px;">No wireless mouse, controller, or headset battery detected yet. Ensure your Xbox, DualSense/DS4 controller, Astro/Logitech headset, Bluetooth, or AW610M 2.4GHz dongle is connected and awake, then click Scan Devices.</p>
       `;
       grid.appendChild(info);
     }
@@ -1503,6 +1521,7 @@ function applyTelemetry(data) {
     const sList = document.getElementById('sensor-list');
     sList.innerHTML = '';
     const sensors = data.thermals.sensors || [];
+    state.lastSensors = sensors;
     if (sensors.length === 0) {
       if (!data.thermals.isAdmin) {
         sList.innerHTML = `
@@ -1623,7 +1642,7 @@ function syncInspectorFromView() {
   setPrimaryColorUI(col1);
   setZoneBrightnessUI(bright);
   state.colorSecondary = col2;
-  state.effect = eff === 'summer' ? 'static' : eff;
+  state.effect = (eff === 'summer' || eff === 'waves') ? 'static' : eff;
   state.speed = spd;
   if (state.effect === 'aurora') {
     state.auroraColors = [col1, col2, chosenLs.color3 || col1];
@@ -1637,8 +1656,6 @@ function syncInspectorFromView() {
 function syncVirtualLightingFromState() {
   const activeProf = state.profiles.find((p) => p.active) || state.profiles[0];
   const lightsOn = state.settings.lightsOn !== false;
-  const summerActive = lightsOn && !!state.summerMode;
-  const summerColor = '#2ac4ff';
 
   // Build exact (pid, lid) -> unscaled base color, brightness & scaled color lookup from active profile lightsets
   const litBaseColorMap = new Map();
@@ -1740,10 +1757,6 @@ function syncVirtualLightingFromState() {
       state.zoneBaseColors.power = baseCol;
       state.zoneBrightnessMap.power = bright;
     }
-    if (summerActive && keyId !== 'power') {
-      col = summerColor;
-      eff = 'summer';
-    }
     if (col) {
       state.keyColors[keyId] = col;
       applyKeyVisualStyle(keyEl, col, eff);
@@ -1772,7 +1785,7 @@ function syncVirtualLightingFromState() {
       state.zoneBaseColors.touchpad = tpBase;
       state.zoneBrightnessMap.touchpad = tpBright;
     }
-    applyTouchpadVisualStyle(tpEl, summerActive ? summerColor : tpCol);
+    applyTouchpadVisualStyle(tpEl, tpCol);
   }
 
   // 3. Sync Mouse zones
@@ -1805,7 +1818,7 @@ function syncVirtualLightingFromState() {
       state.zoneBaseColors[zKey] = baseCol;
       state.zoneBrightnessMap[zKey] = bright;
     }
-    applySvgZoneVisualStyle(zoneEl, summerActive ? summerColor : col);
+    applySvgZoneVisualStyle(zoneEl, col);
   });
 
   // 4. Sync Chassis zones
@@ -1848,8 +1861,7 @@ function syncVirtualLightingFromState() {
       state.zoneBaseColors[zKey] = baseCol;
       state.zoneBrightnessMap[zKey] = bright;
     }
-    const vis = (summerActive && zid !== 'power') ? summerColor : col;
-    applySvgZoneVisualStyle(zoneEl, vis);
+    applySvgZoneVisualStyle(zoneEl, col);
   });
 }
 
@@ -1899,6 +1911,31 @@ function updateProbeDeckUI() {
   if (remBtn) remBtn.disabled = locked || !existing;
 }
 
+function renderHardwareDiagnostics(data) {
+  const panel = document.getElementById('hw-diag-panel');
+  const out = document.getElementById('hw-diag-output');
+  if (!panel || !out) return;
+  const lines = [];
+  if (data.wmi) {
+    lines.push(`[WMI / ACPI] Alienware=${!!data.wmi.isAlienware} Supported=${!!data.wmi.isSupported} GMode=${!!data.wmi.isGmode} Fans=${data.wmi.fans} Sensors=${data.wmi.sensors} PowerModes=${data.wmi.powerModes}`);
+  }
+  if (Array.isArray(data.mappedDevices)) {
+    lines.push(`[Mapped Devices: ${data.mappedDevices.length}]`);
+    data.mappedDevices.forEach((m) => {
+      lines.push(`  • ${m.name} (${m.vid}:${m.pid}) present=${m.present} API=v${m.version} v4MaxZones=${m.v4MaxZones} lights=${m.lightCount}`);
+    });
+  }
+  if (Array.isArray(data.controllers)) {
+    lines.push(`[HID Controllers: ${data.controllers.length}]`);
+    data.controllers.forEach((c) => {
+      lines.push(`  • ${c.vid}:${c.pid} UP=${c.usagePage} U=${c.usage} API=${c.api} in=${c.inLen} out=${c.outLen} feat=${c.featLen} err=${c.openError} | ${c.product || ''}`);
+      if (c.path) lines.push(`    path: ${c.path}`);
+    });
+  }
+  out.textContent = lines.join('\n') || JSON.stringify(data, null, 2);
+  panel.style.display = 'flex';
+}
+
 function setProbeActive(active) {
   const next = !!active;
   if (state.probeActive === next) {
@@ -1911,6 +1948,7 @@ function setProbeActive(active) {
   if (next) {
     sendProbeLed();
   } else {
+    state.probeLedId = 0;
     sendCommand({ cmd: 'endProbe' });
   }
   updateProbeDeckUI();
@@ -1921,10 +1959,21 @@ function initLedProbeDeck() {
   const devSel = document.getElementById('probe-dev-select');
   const prevBtn = document.getElementById('probe-prev');
   const nextBtn = document.getElementById('probe-next');
+  const stepper = document.querySelector('.probe-stepper');
   const addBtn = document.getElementById('probe-add');
   const remBtn = document.getElementById('probe-remove');
   const tpBtn = document.getElementById('probe-bind-tp');
   const pwrBtn = document.getElementById('probe-bind-pwr');
+  const btnEmergWhite = document.getElementById('btn-emergency-white');
+  const btnDetectHw = document.getElementById('btn-detect-hardware');
+  const btnCopyDiag = document.getElementById('btn-copy-diag');
+  const btnCloseDiag = document.getElementById('btn-close-diag');
+
+  const stepProbe = (delta) => {
+    state.probeLedId = (state.probeLedId + delta + 256) % 256;
+    updateProbeDeckUI();
+    if (state.probeActive) sendProbeLed();
+  };
 
   if (toggle) {
     toggle.addEventListener('change', (e) => {
@@ -1947,18 +1996,18 @@ function initLedProbeDeck() {
     });
   }
   if (prevBtn) {
-    prevBtn.addEventListener('click', () => {
-      state.probeLedId = (state.probeLedId + 255) % 256;
-      updateProbeDeckUI();
-      if (state.probeActive) sendProbeLed();
-    });
+    prevBtn.addEventListener('click', () => stepProbe(-1));
   }
   if (nextBtn) {
-    nextBtn.addEventListener('click', () => {
-      state.probeLedId = (state.probeLedId + 1) % 256;
-      updateProbeDeckUI();
-      if (state.probeActive) sendProbeLed();
-    });
+    nextBtn.addEventListener('click', () => stepProbe(1));
+  }
+  if (stepper) {
+    stepper.addEventListener('wheel', (e) => {
+      if (!state.probeActive) return;
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      const delta = (e.deltaY < 0 || e.deltaX > 0) ? 1 : -1;
+      stepProbe(delta);
+    }, { passive: false });
   }
   if (addBtn) {
     addBtn.addEventListener('click', () => {
@@ -1989,6 +2038,37 @@ function initLedProbeDeck() {
       sendCommand({ cmd: 'bindLightMapping', pid: dev.pid, lightId: state.probeLedId, name: 'Power Button', flags: 1 });
     });
   }
+  if (btnEmergWhite) {
+    btnEmergWhite.addEventListener('click', () => {
+      if (state.probeActive) setProbeActive(false);
+      sendCommand({ cmd: 'emergencyWhite' });
+      const prevEl = document.getElementById('selected-names');
+      if (prevEl) prevEl.textContent = '⚡ Emergency White broadcast sent to all controllers (0..44 chassis / keyboard / mouse)';
+    });
+  }
+  if (btnDetectHw) {
+    btnDetectHw.addEventListener('click', () => {
+      const panel = document.getElementById('hw-diag-panel');
+      const out = document.getElementById('hw-diag-output');
+      if (panel) panel.style.display = 'flex';
+      if (out) out.textContent = 'Scanning USB HID & ACPI hardware interfaces...';
+      sendCommand({ cmd: 'detectHardware' });
+    });
+  }
+  if (btnCopyDiag) {
+    btnCopyDiag.addEventListener('click', () => {
+      const out = document.getElementById('hw-diag-output');
+      if (out && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(out.textContent || '').catch(() => {});
+      }
+    });
+  }
+  if (btnCloseDiag) {
+    btnCloseDiag.addEventListener('click', () => {
+      const panel = document.getElementById('hw-diag-panel');
+      if (panel) panel.style.display = 'none';
+    });
+  }
   updateProbeDeckUI();
 }
 
@@ -2000,7 +2080,7 @@ function applyFullState(data) {
 
   if (data.settings) {
     state.settings = data.settings;
-    state.summerMode = !!data.settings.summerMode;
+    state.wavesMode = !!(data.settings.wavesMode ?? data.settings.summerMode);
     if (Array.isArray(data.settings.favorites)) {
       state.favorites = Array.from(new Set(data.settings.favorites.map(normalizeHex).filter(Boolean)));
     } else if (!hasWebView) {
@@ -2009,7 +2089,7 @@ function applyFullState(data) {
       state.favorites = [];
     }
     updateLightsButton();
-    updateSummerModeUI();
+    updateWavesModeUI();
     renderFavoriteColors();
     document.getElementById('master-brightness').value = data.settings.brightness ?? 255;
     document.getElementById('master-brightness-val').textContent = `${Math.round(((data.settings.brightness ?? 255) / 255) * 100)}%`;
@@ -2019,6 +2099,8 @@ function applyFullState(data) {
     if (setAlwaysAdmin) setAlwaysAdmin.checked = !!data.settings.alwaysAdmin;
     const setStartupIntro = document.getElementById('set-startup-intro');
     if (setStartupIntro) setStartupIntro.checked = data.settings.startupIntro !== false;
+    const setIntroStyle = document.getElementById('set-intro-style');
+    if (setIntroStyle) setIntroStyle.value = String(data.settings.introStyle ?? 0);
     document.getElementById('set-prof-switch').checked = !!data.settings.enableProfSwitch;
     document.getElementById('set-gamma').checked = !!data.settings.gammaCorrection;
     document.getElementById('set-fan-control').checked = !!data.settings.fanControl;
@@ -2244,23 +2326,33 @@ function initMiscActions() {
     });
   });
 
+  const getPrimarySensorId = () => (Array.isArray(state.lastSensors) && state.lastSensors.length > 0 ? (state.lastSensors[0].id ?? 0) : 0);
+
   document.querySelectorAll('[data-tpreset]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const preset = THERMAL_PRESETS[btn.dataset.tpreset];
+      const presetKey = btn.dataset.tpreset;
+      const preset = THERMAL_PRESETS[presetKey];
       if (!preset) return;
       state.fanCurve = preset.points.map((p) => ({ ...p }));
       renderFanCurve();
       updateCurvePresetBadge();
-      document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
-        b.classList.toggle('active', parseInt(b.dataset.pm, 10) === preset.mode);
-      });
-      sendCommand({ cmd: 'setPowerMode', mode: preset.mode });
-      sendCommand({ cmd: 'setFanCurve', fanId: 0, sensorId: 0, active: true, points: state.fanCurve });
+      if (presetKey === 'max') {
+        document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
+          b.classList.toggle('active', parseInt(b.dataset.pm, 10) === 3);
+        });
+        sendCommand({ cmd: 'setFanCurve', fanId: -1, sensorId: getPrimarySensorId(), active: false, points: state.fanCurve });
+        sendCommand({ cmd: 'setPowerMode', mode: 3 });
+      } else {
+        document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
+          b.classList.toggle('active', parseInt(b.dataset.pm, 10) === 0);
+        });
+        sendCommand({ cmd: 'setFanCurve', fanId: -1, sensorId: getPrimarySensorId(), active: true, points: state.fanCurve });
+      }
     });
   });
 
   const gamePresets = {
-    cyberpunk: { color: '#fcee0a', color2: '#00f0ff', color3: '#ff007f', effect: 'aurora', speed: 60, name: 'Cyberpunk 2077' },
+    cyberpunk: { color: '#fcee0a', color2: '#00f0ff', color3: '#ff007f', effect: 'aurora', speed: 60, name: 'Cyberpunk' },
     aurora: { color: '#00f0ff', color2: '#00ff9d', color3: '#7b2cbf', effect: 'aurora', speed: 45, name: 'Aurora Borealis' },
     area51: { color: '#00f0ff', color2: '#7b2cbf', color3: '#3a86ff', effect: 'morph', speed: 50, name: 'Area-51 Orbital' },
     stealth: { color: '#ff2a4b', color2: '#7b2cbf', color3: '#ff2a4b', effect: 'breathing', speed: 35, name: 'Crimson Stealth' },
@@ -2300,17 +2392,30 @@ function initMiscActions() {
   }
 
   document.getElementById('btn-save-curve').addEventListener('click', () => {
-    sendCommand({ cmd: 'setFanCurve', fanId: 0, sensorId: 0, active: true, points: state.fanCurve });
+    document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
+      b.classList.toggle('active', parseInt(b.dataset.pm, 10) === 0);
+    });
+    sendCommand({ cmd: 'setFanCurve', fanId: -1, sensorId: getPrimarySensorId(), active: true, points: state.fanCurve });
   });
 
   document.getElementById('btn-refresh-batt').addEventListener('click', () => {
     sendCommand({ cmd: 'getTelemetry' });
   });
 
+  const setIntroStyle = document.getElementById('set-intro-style');
+  if (setIntroStyle) {
+    setIntroStyle.addEventListener('change', (e) => {
+      const style = parseInt(e.target.value, 10) || 0;
+      state.settings.introStyle = style;
+      sendCommand({ cmd: 'setSettings', introStyle: style });
+    });
+  }
+
   const btnTestIntro = document.getElementById('btn-test-intro');
   if (btnTestIntro) {
     btnTestIntro.addEventListener('click', () => {
-      sendCommand({ cmd: 'testIntro' });
+      const style = setIntroStyle ? (parseInt(setIntroStyle.value, 10) || 0) : 0;
+      sendCommand({ cmd: 'testIntro', style });
     });
   }
 
@@ -2347,7 +2452,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initWindowControls();
   initMiscActions();
   renderFanCurve();
-  updateSummerModeUI();
+  updateWavesModeUI();
   renderFavoriteColors();
   syncLightingControlsForView();
 
@@ -2358,7 +2463,7 @@ document.addEventListener('DOMContentLoaded', () => {
     applyFullState({
       devices: [{ pid: 0x550, name: 'Alienware Integrated Keyboard (Preview)', lights: [{ id: 1, name: 'WASD Cluster' }, { id: 2, name: 'Logo Emblem' }] }],
       profiles: [{ id: 0, name: 'Default', isDefault: true, active: true }, { id: 1, name: 'Orbital Gaming', isDefault: false, active: false }],
-      settings: { lightsOn: true, brightness: 255, startWindows: true, startMinimized: true, startupIntro: true, summerMode: false, favorites: ['#00f0ff', '#fcee0a'] }
+      settings: { lightsOn: true, brightness: 255, startWindows: true, startMinimized: true, startupIntro: true, introStyle: 0, wavesMode: false, favorites: ['#00f0ff', '#fcee0a'] }
     });
     applyTelemetry({
       system: { cpu: 24, temp: 54, batt: 88 },

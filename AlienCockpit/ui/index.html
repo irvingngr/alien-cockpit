@@ -107,9 +107,9 @@
               <p class="subtitle">Click or drag-select keys &amp; zones to paint colors and effects in real time.</p>
             </div>
             <div class="lighting-header-actions">
-              <button type="button" class="btn-global-summer" id="btn-global-summer" aria-pressed="false" title="Toggle Global Summer Mode across the active profile (ocean shimmer + key-press ripples)">
-                <span class="summer-dot"></span>
-                <span>🌊 Summer Mode: <strong id="global-summer-state">OFF</strong></span>
+              <button type="button" class="btn-global-waves" id="btn-global-waves" aria-pressed="false" title="Toggle Global Waves Mode across the active profile (key-press water ripple waves over active colors)">
+                <span class="waves-dot"></span>
+                <span>🌊 Waves Mode: <strong id="global-waves-state">OFF</strong></span>
               </button>
               <div class="device-switcher">
                 <button class="seg-btn active" data-view="keyboard">Keyboard</button>
@@ -254,7 +254,20 @@
                   <button class="qs-btn btn-danger-soft" id="probe-remove" disabled title="Remove current LED ID from device">&#10005; Remove</button>
                   <button class="qs-btn" id="probe-bind-tp" disabled title="Bind current red LED as RGB Touchpad">&rarr; Touchpad</button>
                   <button class="qs-btn" id="probe-bind-pwr" disabled title="Bind current red LED as Power Button">&rarr; Power Btn</button>
+                  <button class="qs-btn" id="btn-emergency-white" title="Force all LED channels (keyboard, chassis, fans, lid, touchpad) bright white for hardware verification">⚡ Emergency White</button>
+                  <button class="qs-btn" id="btn-detect-hardware" title="Inspect live HID interfaces, AW-ELC controllers, and ACPI thermal telemetry">🔍 Detect Hardware</button>
                 </div>
+              </div>
+
+              <div class="hw-diag-panel" id="hw-diag-panel" style="display:none;">
+                <div class="hw-diag-header">
+                  <span>Hardware &amp; HID Controller Diagnostics</span>
+                  <div style="display:flex;gap:6px;">
+                    <button type="button" class="qs-btn" id="btn-copy-diag">Copy</button>
+                    <button type="button" class="qs-btn" id="btn-close-diag">&#10005;</button>
+                  </div>
+                </div>
+                <pre class="hw-diag-output" id="hw-diag-output"></pre>
               </div>
             </div>
 
@@ -442,7 +455,7 @@
               <span>Active Theme Preset: <strong id="active-preset-name">—</strong> (non-destructive preview — saved profiles preserved)</span>
             </div>
             <div class="preset-cards" id="game-presets">
-              <button class="preset-chip" data-preset="cyberpunk" style="--p1:#fcee0a;--p2:#00f0ff">Cyberpunk 2077</button>
+              <button class="preset-chip" data-preset="cyberpunk" style="--p1:#fcee0a;--p2:#00f0ff">Cyberpunk</button>
               <button class="preset-chip" data-preset="aurora" style="--p1:#00f0ff;--p2:#00ff9d">Aurora Borealis</button>
               <button class="preset-chip" data-preset="area51" style="--p1:#00f0ff;--p2:#7b2cbf">Area-51 Orbital</button>
               <button class="preset-chip" data-preset="stealth" style="--p1:#ff2a4b;--p2:#7b2cbf">Crimson Stealth</button>
@@ -489,10 +502,14 @@
               <label class="toggle-row">
                 <div>
                   <strong>Startup Keyboard Intro Animation</strong>
-                  <span>Play a dynamic RGB sweep presentation across keyboard keys when the app starts</span>
+                  <span>Play a dynamic RGB sweep or COCKPIT matrix + Alienhead intro when the app starts</span>
                 </div>
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <button type="button" class="qs-btn" id="btn-test-intro" title="Play intro animation now">Preview</button>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+                  <select id="set-intro-style" class="probe-dev-select" aria-label="Intro Animation Style">
+                    <option value="0">Orbital RGB Sweep</option>
+                    <option value="1">COCKPIT Matrix + Logo</option>
+                  </select>
+                  <button type="button" class="qs-btn" id="btn-test-intro" title="Play selected intro animation now">Preview</button>
                   <input type="checkbox" id="set-startup-intro" />
                 </div>
               </label>
@@ -541,7 +558,7 @@
           <div class="card about-card">
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div>
-              <h3>AlienCockpit v1.0.8 — AWCC Alternative</h3>
+              <h3>AlienCockpit v1.0.9 — AWCC Alternative</h3>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
               <div class="credits-author">
                 <span>Crafted by <strong>Irving Ngr</strong></span>

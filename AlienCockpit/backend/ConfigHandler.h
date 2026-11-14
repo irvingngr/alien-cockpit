@@ -177,6 +177,7 @@ public:
 	DWORD startMinimized;
 	DWORD alwaysAdmin;
 	DWORD startupIntro;
+	DWORD introStyle;
 	DWORD updateCheck;
 	DWORD lightsOn;
 	DWORD dimmed;
@@ -201,7 +202,7 @@ public:
 	DWORD fansOnBattery;
 	DWORD actionLights;
 	DWORD actionTimeout;
-	DWORD summerMode;
+	DWORD wavesMode;
 
 	string favoriteColors;
 

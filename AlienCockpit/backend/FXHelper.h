@@ -77,4 +77,6 @@ public:
 	void QueryCommand(WORD pid, LightQueryElement& lqe);
 	void ClearAndRefresh(bool force = false);
 	void ChangeAccent(AlienFX_SDK::Afx_action* action);
+	bool EmergencyWhiteAll();
+	void ApplyMouseLowBatteryRed(bool active);
 };

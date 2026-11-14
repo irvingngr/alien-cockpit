@@ -119,8 +119,11 @@ namespace AlienFX_SDK {
 				return HidD_SetOutputReport(devHandle, buffer, length);
 			case API_V4: {
 				BOOL ok = HidD_SetOutputReport(devHandle, buffer, length);
+				if (!ok && WriteFile(devHandle, buffer, length, &written, NULL)) {
+					ok = TRUE;
+				}
 				Sleep(8);
-				return ok;
+				return ok != FALSE;
 			}
 			case API_V5:
 				return HidD_SetFeature(devHandle, buffer, length);
@@ -218,6 +221,11 @@ namespace AlienFX_SDK {
 				&& HidD_GetPreparsedData(devHandle, &prep_caps)) {
 				HidP_GetCaps(prep_caps, &caps);
 				HidD_FreePreparsedData(prep_caps);
+				hidUsagePage = caps.UsagePage;
+				hidUsage = caps.Usage;
+				hidInLen = caps.InputReportByteLength;
+				hidOutLen = caps.OutputReportByteLength;
+				hidFeatLen = caps.FeatureReportByteLength;
 				length = caps.OutputReportByteLength;
 				pid = attributes.ProductID;
 				switch (vid = attributes.VendorID) {
@@ -243,6 +251,10 @@ namespace AlienFX_SDK {
 						break;
 					//case 193:
 					//	version = API_V9;
+					}
+					if (version == API_UNKNOWN && caps.UsagePage >= 0xff00 && caps.FeatureReportByteLength == 34) {
+						length = 34;
+						version = API_V4;
 					}
 					break;
 				default:
@@ -382,8 +394,13 @@ namespace AlienFX_SDK {
 		case API_V4:
 		{
 			WaitForReady();
-			PrepareAndSend(COMMV4_control, { { 4, {4} }/*, { 5, 0xff }*/ });
-			inSet = PrepareAndSend(COMMV4_control, { {4, {1}}/*, { 5, 0xff }*/ });
+			if (pid == 0x0551) {
+				PrepareAndSend(COMMV4_control, { { 4, {4, 0, 0x61} } });
+				inSet = PrepareAndSend(COMMV4_control, { { 4, {1, 0, 0x61} } });
+			} else {
+				PrepareAndSend(COMMV4_control, { { 4, {4} }/*, { 5, 0xff }*/ });
+				inSet = PrepareAndSend(COMMV4_control, { {4, {1}}/*, { 5, 0xff }*/ });
+			}
 		} break;
 		case API_V3: case API_V2:
 		{
@@ -414,7 +431,11 @@ namespace AlienFX_SDK {
 			} break;
 			case API_V4:
 			{
-				inSet = !PrepareAndSend(COMMV4_control);
+				if (pid == 0x0551) {
+					inSet = !PrepareAndSend(COMMV4_control, { { 4, {3, 0, 0x61} } });
+				} else {
+					inSet = !PrepareAndSend(COMMV4_control);
+				}
 				Sleep(20);
 			} break;
 			case API_V3: case API_V2:
@@ -545,7 +566,9 @@ namespace AlienFX_SDK {
 		bool val = true;
 		vector<Afx_icommand> mods;
 
-		if (!inSet) Reset();
+		if (!(version == API_V4 && save)) {
+			if (!inSet) Reset();
+		}
 		switch (version) {
 		case API_V8: {
 			PrepareAndSend(COMMV8_readyToColor, { {2,{(byte)act->size()}} });
@@ -577,7 +600,7 @@ namespace AlienFX_SDK {
 			for (auto nc = act->begin(); nc != act->end(); nc++) {
 				if (!nc->act.empty() && nc->act.front().type == AlienFX_A_Power)
 					powerBlocks.push_back(&(*nc));
-				else
+				else if (!(version == API_V4 && save))
 					val = SetAction(&(*nc));
 			}
 			if (save) {
@@ -1330,5 +1353,152 @@ namespace AlienFX_SDK {
 	bool Functions::IsHaveGlobal()
 	{
 		return version == API_V5 || version == API_V8;
+	}
+
+	bool Functions::EmergencyWhiteV4()
+	{
+		if (version != API_V4 || !devHandle) return false;
+		if (inSet) UpdateColors();
+		WaitForReady();
+
+		// 1. Standard group 0x0061 batch across channels 0..44
+		PrepareAndSend(COMMV4_control, { { 4, {4, 0, 0x61} } });
+		PrepareAndSend(COMMV4_control, { { 4, {1, 0, 0x61} } });
+
+		vector<byte> allIds;
+		allIds.reserve(45);
+		for (byte id = 0; id < 45; id++) allIds.push_back(id);
+
+		for (size_t idx = 0; idx < allIds.size(); idx += 25) {
+			size_t count = (allIds.size() - idx < 25) ? (allIds.size() - idx) : 25;
+			vector<byte> chunk(allIds.begin() + idx, allIds.begin() + idx + count);
+			vector<Afx_icommand> mods = {
+				{ 5, { (byte)count } },
+				{ 6, chunk }
+			};
+			PrepareAndSend(COMMV4_colorSel, &mods);
+
+			mods = {
+				{ 3, { 0x00, 0x07, 0xd0, 0x00, 0xfa, 0xff, 0xff, 0xff } }
+			};
+			PrepareAndSend(COMMV4_colorSet, &mods);
+		}
+		PrepareAndSend(COMMV4_control, { { 4, {2, 0, 0x61} } });
+		PrepareAndSend(COMMV4_control, { { 4, {6, 0, 0x61} } });
+		PrepareAndSend(COMMV4_control, { { 4, {5, 0, 0x61} } });
+
+		// 2. Direct single-color broadcast command (0x03 0x27) & turn-on (0x03 0x26)
+		for (size_t idx = 0; idx < allIds.size(); idx += 25) {
+			size_t count = (allIds.size() - idx < 25) ? (allIds.size() - idx) : 25;
+			vector<byte> chunk(allIds.begin() + idx, allIds.begin() + idx + count);
+			vector<Afx_icommand> omods = {
+				{ 3, { 0xff, 0xff, 0xff, 0x00, (byte)count } },
+				{ 8, chunk }
+			};
+			PrepareAndSend(COMMV4_setOneColor, &omods);
+
+			vector<Afx_icommand> tmods = {
+				{ 3, { 0x00, 0x00, (byte)count } },
+				{ 6, chunk }
+			};
+			PrepareAndSend(COMMV4_turnOn, &tmods);
+		}
+		PrepareAndSend(COMMV4_control);
+		Sleep(20);
+		return true;
+	}
+
+	vector<Mappings::HidDiagEntry> Mappings::CollectHardwareDiagnostics()
+	{
+		vector<HidDiagEntry> out;
+		GUID hidGuid{};
+		HidD_GetHidGuid(&hidGuid);
+		HDEVINFO hDevInfo = SetupDiGetClassDevsW(&hidGuid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+		if (hDevInfo == INVALID_HANDLE_VALUE) return out;
+
+		auto wideToUtf8 = [](const wchar_t* ws) -> string {
+			if (!ws || !ws[0]) return {};
+			int len = WideCharToMultiByte(CP_UTF8, 0, ws, -1, NULL, 0, NULL, NULL);
+			if (len <= 1) return {};
+			string s(len - 1, '\0');
+			WideCharToMultiByte(CP_UTF8, 0, ws, -1, &s[0], len, NULL, NULL);
+			return s;
+		};
+
+		SP_DEVICE_INTERFACE_DATA ifData{};
+		ifData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+		for (DWORD dw = 0; SetupDiEnumDeviceInterfaces(hDevInfo, NULL, &hidGuid, dw, &ifData); ++dw) {
+			DWORD reqSize = 0;
+			SetupDiGetDeviceInterfaceDetailW(hDevInfo, &ifData, NULL, 0, &reqSize, NULL);
+			if (!reqSize) continue;
+			vector<byte> buf(reqSize);
+			auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(buf.data());
+			detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+			if (!SetupDiGetDeviceInterfaceDetailW(hDevInfo, &ifData, detail, reqSize, NULL, NULL)) continue;
+
+			string pathUtf8 = wideToUtf8(detail->DevicePath);
+			string pathLow = pathUtf8;
+			for (char& ch : pathLow) {
+				if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+			}
+			bool isTargetVid = (pathLow.find("vid_187c") != string::npos) ||
+				(pathLow.find("vid_0d62") != string::npos) ||
+				(pathLow.find("vid_0461") != string::npos) ||
+				(pathLow.find("vid_04f2") != string::npos) ||
+				(pathLow.find("vid_0424") != string::npos) ||
+				(pathLow.find("vid_413c") != string::npos);
+			if (!isTargetVid) continue;
+
+			HidDiagEntry entry;
+			entry.path = pathUtf8;
+			HANDLE h = CreateFileW(detail->DevicePath, GENERIC_READ | GENERIC_WRITE,
+				FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+			if (h == INVALID_HANDLE_VALUE) {
+				entry.openError = GetLastError();
+				h = CreateFileW(detail->DevicePath, 0,
+					FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+			}
+			if (h != INVALID_HANDLE_VALUE) {
+				HIDD_ATTRIBUTES attrs{ sizeof(HIDD_ATTRIBUTES) };
+				if (HidD_GetAttributes(h, &attrs)) {
+					entry.vid = attrs.VendorID;
+					entry.pid = attrs.ProductID;
+				}
+				PHIDP_PREPARSED_DATA prep = NULL;
+				if (HidD_GetPreparsedData(h, &prep) && prep) {
+					HIDP_CAPS caps{};
+					if (HidP_GetCaps(prep, &caps) == HIDP_STATUS_SUCCESS) {
+						entry.usagePage = caps.UsagePage;
+						entry.usage = caps.Usage;
+						entry.inLen = caps.InputReportByteLength;
+						entry.outLen = caps.OutputReportByteLength;
+						entry.featLen = caps.FeatureReportByteLength;
+					}
+					HidD_FreePreparsedData(prep);
+				}
+				wchar_t prodW[128]{};
+				if (HidD_GetProductString(h, prodW, 127) && prodW[0]) {
+					entry.product = wideToUtf8(prodW);
+				}
+				if (entry.vid == 0x187c) {
+					if (entry.outLen == 9) entry.detectedApi = API_V2;
+					else if (entry.outLen == 12) entry.detectedApi = API_V3;
+					else if (entry.outLen == 34 || (entry.usagePage >= 0xff00 && entry.featLen == 34)) entry.detectedApi = API_V4;
+					else if (entry.outLen == 65) entry.detectedApi = API_V6;
+				} else if (entry.vid == 0x0d62 && entry.usage == 0xcc && entry.outLen == 0) {
+					entry.detectedApi = API_V5;
+				} else if (entry.vid == 0x0461 && entry.outLen == 65 && entry.usagePage >= 0xff00) {
+					entry.detectedApi = API_V7;
+				} else if (entry.vid == 0x04f2 && entry.outLen == 65) {
+					entry.detectedApi = API_V8;
+				} else if (entry.vid == 0x0424 && entry.outLen == 65 && entry.pid != 0x274c) {
+					entry.detectedApi = API_V6;
+				}
+				CloseHandle(h);
+			}
+			out.push_back(entry);
+		}
+		SetupDiDestroyDeviceInfoList(hDevInfo);
+		return out;
 	}
 }
