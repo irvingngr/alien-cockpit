@@ -426,13 +426,13 @@ body {
 
 .keycap {
   height: 40px;
-  min-width: 34px;
+  min-width: 24px;
   flex: 1;
   border-radius: 5px;
   background: #121a2d;
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: #dce6f5;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -453,10 +453,13 @@ body {
   box-shadow: 0 0 12px rgba(0, 240, 255, 0.5) !important;
 }
 
+.keycap.w-125 { flex: 1.25; }
 .keycap.w-15 { flex: 1.5; }
 .keycap.w-175 { flex: 1.75; }
 .keycap.w-2 { flex: 2; }
 .keycap.w-225 { flex: 2.25; }
+.keycap.w-5 { flex: 5.0; }
+.keycap.w-55 { flex: 5.5; }
 .keycap.w-6 { flex: 6.2; }
 .keycap.spacer { background: transparent; border: none; pointer-events: none; flex: 0.4; }
 
@@ -925,20 +928,22 @@ body {
 }
 
 .kbd-numpad {
-  width: 158px;
+  width: 170px;
   flex-shrink: 0;
   background: #070b14;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
-  padding: 12px 8px;
+  padding: 14px 8px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  grid-auto-rows: 38px;
-  gap: 4px;
+  grid-auto-rows: 40px;
+  gap: 6px;
 }
 
 .kbd-numpad .keycap {
   height: auto;
+  min-width: 0;
+  font-size: 9px;
 }
 
 .keycap.num-tall {

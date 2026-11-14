@@ -17,6 +17,7 @@
 #include "../backend/BatteryMonitor.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -54,6 +55,7 @@ static ComPtr<ICoreWebView2> g_webview;
 static NOTIFYICONDATAW g_nid{};
 static bool g_trayAdded = false;
 static const UINT_PTR TIMER_TELEMETRY = 1;
+static const UINT_PTR TIMER_EFFECTS = 2;
 static std::vector<BatteryDeviceInfo> g_cachedBatteries;
 static ULONGLONG g_lastBatteryScanTick = 0;
 
@@ -121,60 +123,182 @@ static void UpdateTrayIconAndTooltip(bool forceScan = false) {
     Shell_NotifyIconW(NIM_MODIFY, &g_nid);
 }
 
+static std::vector<std::string> ParseCsvLine(const std::string& rawLine) {
+    std::vector<std::string> cols;
+    std::string line = rawLine;
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+    size_t i = 0, n = line.size();
+    while (i <= n) {
+        if (i == n) {
+            cols.push_back("");
+            break;
+        }
+        if (line[i] == '\'') {
+            size_t start = i + 1;
+            size_t close = std::string::npos;
+            for (size_t j = start; j < n; ++j) {
+                if (line[j] == '\'' && (j + 1 == n || line[j + 1] == ',')) {
+                    close = j;
+                    break;
+                }
+            }
+            if (close != std::string::npos) {
+                cols.push_back(line.substr(start, close - start));
+                i = close + 1;
+                if (i < n && line[i] == ',') ++i;
+                else break;
+            } else {
+                cols.push_back(line.substr(start));
+                break;
+            }
+        } else {
+            size_t comma = line.find(',', i);
+            if (comma == std::string::npos) {
+                cols.push_back(line.substr(i));
+                break;
+            } else {
+                cols.push_back(line.substr(i, comma - i));
+                i = comma + 1;
+            }
+        }
+    }
+    return cols;
+}
+
+static std::vector<AlienFX_SDK::Afx_light> BuildDarfonPerKeyTemplate() {
+    struct DarfonKeyDef { byte id; WORD flags; WORD scancode; const char* name; };
+    static const DarfonKeyDef kKeys[] = {
+        { 0,   0, 27,  "Esc" },
+        { 1,   0, 112, "F1" }, { 2,  0, 113, "F2" }, { 3,  0, 114, "F3" }, { 4,  0, 115, "F4" },
+        { 5,   0, 116, "F5" }, { 6,  0, 117, "F6" }, { 7,  0, 118, "F7" }, { 8,  0, 119, "F8" },
+        { 9,   0, 120, "F9" }, { 10, 0, 121, "F10" }, { 11, 0, 122, "F11" }, { 12, 0, 123, "F12" },
+        { 13,  0, 292, "Home" }, { 14, 0, 291, "End" }, { 15, 0, 302, "Delete" },
+        { 16,  0, 173, "Mute" }, { 17, 0, 430, "VolumeDn" }, { 18, 0, 431, "VolumeUp" }, { 19, 0, 0, "Microphone" },
+        { 20,  0, 192, "`" },
+        { 21,  0, 49, "1" }, { 22, 0, 50, "2" }, { 23, 0, 51, "3" }, { 24, 0, 52, "4" }, { 25, 0, 53, "5" },
+        { 26,  0, 54, "6" }, { 27, 0, 55, "7" }, { 28, 0, 56, "8" }, { 29, 0, 57, "9" }, { 30, 0, 48, "0" },
+        { 31,  0, 189, "-" }, { 32, 0, 187, "=" },
+        { 34,  0, 8, "Backspace" }, { 35, 0, 8, "Backspace 2" },
+        { 36,  0, 400, "Num Lock" }, { 37, 0, 367, "Num /" }, { 38, 0, 106, "Num *" }, { 39, 0, 109, "Num -" },
+        { 40,  0, 9, "Tab" }, { 41, 0, 9, "Tab 2" },
+        { 42,  0, 81, "Q" }, { 43, 0, 87, "W" }, { 44, 0, 69, "E" }, { 45, 0, 82, "R" }, { 46, 0, 84, "T" },
+        { 47,  0, 89, "Y" }, { 48, 0, 85, "U" }, { 49, 0, 73, "I" }, { 50, 0, 79, "O" }, { 51, 0, 80, "P" },
+        { 52,  0, 219, "[" }, { 53, 0, 221, "]" }, { 54, 0, 220, "\\ 2" }, { 55, 0, 220, "\\" },
+        { 56,  0, 103, "Num 7" }, { 57, 0, 104, "Num 8" }, { 58, 0, 105, "Num 9" }, { 59, 0, 107, "Num + 2" },
+        { 60,  0, 20, "Caps Lock" }, { 61, 0, 20, "Caps Lock 2" },
+        { 62,  0, 65, "A" }, { 63, 0, 83, "S" }, { 64, 0, 68, "D" }, { 65, 0, 70, "F" }, { 66, 0, 71, "G" },
+        { 67,  0, 72, "H" }, { 68, 0, 74, "J" }, { 69, 0, 75, "K" }, { 70, 0, 76, "L" },
+        { 71,  0, 186, ";" }, { 72, 0, 222, "'" }, { 74, 0, 13, "Enter" },
+        { 76,  0, 100, "Num 4" }, { 77, 0, 101, "Num 5" }, { 78, 0, 102, "Num 6" }, { 79, 0, 107, "Num +" },
+        { 80,  0, 160, "Shift" }, { 81, 0, 160, "Shift 2" },
+        { 83,  0, 90, "Z" }, { 84, 0, 88, "X" }, { 85, 0, 67, "C" }, { 86, 0, 86, "V" },
+        { 87,  0, 66, "B" }, { 88, 0, 78, "N" }, { 89, 0, 77, "M" },
+        { 90,  0, 188, "," }, { 91, 0, 190, "." }, { 92, 0, 191, "/" },
+        { 93,  0, 417, "Right Shift 2" }, { 94, 0, 417, "Right Shift" },
+        { 96,  0, 97, "Num 1" }, { 97, 0, 98, "Num 2" }, { 98, 0, 99, "Num 3" }, { 99, 0, 269, "Num Enter" },
+        { 100, 0, 162, "Ctrl" }, { 101, 0, 255, "FN" },
+        { 102, 0, 347, "Left Windows" }, { 103, 0, 347, "Left Windows 2" },
+        { 104, 0, 164, "Alt" },
+        { 105, 0, 32, "Space 3" }, { 106, 0, 32, "Space" }, { 107, 0, 32, "Space 2" }, { 108, 0, 32, "Space 4" },
+        { 109, 0, 348, "Right Windows" }, { 111, 0, 421, "Right Alt" }, { 112, 0, 419, "Right Ctrl" },
+        { 114, 0, 294, "Up" },
+        { 116, 0, 96, "Num 0" }, { 117, 0, 96, "Num 0 2" }, { 118, 0, 110, "Num Del ." }, { 119, 0, 269, "Num Enter 2" },
+        { 133, 0, 293, "Left" }, { 134, 0, 296, "Down" }, { 135, 0, 295, "Right" }
+    };
+    std::vector<AlienFX_SDK::Afx_light> out;
+    out.reserve(sizeof(kKeys) / sizeof(kKeys[0]));
+    for (const auto& k : kKeys) {
+        AlienFX_SDK::Afx_light l{};
+        l.lightid = k.id;
+        l.flags = k.flags;
+        l.scancode = k.scancode;
+        l.name = k.name;
+        out.push_back(l);
+    }
+    return out;
+}
+
 static void EnsureDefaultDeviceMappings() {
     if (!conf) return;
     std::wstring csvPath = GetExeDirectory() + L"\\Mappings\\devices.csv";
     std::string csvPathUtf8 = WideToUtf8(csvPath);
+    std::vector<AlienFX_SDK::Afx_light> darfonTemplate = BuildDarfonPerKeyTemplate();
 
     bool anyAdded = false;
     for (auto& dev : conf->afx_dev.fxdevs) {
-        if (!dev.present || !dev.lights.empty()) continue;
+        if (!dev.present) continue;
 
-        // 1. Try matching vid/pid in Mappings/devices.csv
+        bool isDarfonKeyboard = (dev.vid == 0x0D62) || (dev.dev && dev.dev->version == AlienFX_SDK::API_V5);
+        bool isPlaceholder16 = (dev.lights.size() == 16 && dev.lights[0].name == "LED Zone 0");
+        bool allZeroScancode = !dev.lights.empty() && std::all_of(dev.lights.begin(), dev.lights.end(),
+            [](const AlienFX_SDK::Afx_light& l) { return l.scancode == 0; });
+        bool needsUpgrade = dev.lights.empty() ||
+            (isDarfonKeyboard && (isPlaceholder16 || dev.lights.size() <= 20 || allZeroScancode));
+
+        if (!needsUpgrade) continue;
+
+        dev.lights.clear();
+
+        // 1. Try matching vid/pid in Mappings/devices.csv (first matching block)
         std::ifstream file(csvPathUtf8);
         if (file.is_open()) {
             std::string line;
             bool inMatchingDevice = false;
+            bool foundDevice = false;
             while (std::getline(file, line)) {
                 if (line.empty()) continue;
-                std::vector<std::string> cols;
-                std::string cur;
-                bool inQuotes = false;
-                for (char ch : line) {
-                    if (ch == '\'') { inQuotes = !inQuotes; }
-                    else if (ch == ',' && !inQuotes) { cols.push_back(cur); cur.clear(); }
-                    else if (ch != '\r' && ch != '\n') { cur.push_back(ch); }
-                }
-                cols.push_back(cur);
+                std::vector<std::string> cols = ParseCsvLine(line);
                 if (cols.empty()) continue;
 
                 if (cols[0] == "0" && cols.size() >= 4) {
+                    if (foundDevice) break;
                     int fvid = std::atoi(cols[1].c_str());
                     int fpid = std::atoi(cols[2].c_str());
                     inMatchingDevice = (fvid == dev.vid && fpid == dev.pid);
+                    if (inMatchingDevice) foundDevice = true;
                 } else if (cols[0] == "3") {
+                    if (inMatchingDevice) break;
                     inMatchingDevice = false;
                 } else if (inMatchingDevice && cols[0] == "1" && cols.size() >= 4) {
+                    byte lid = static_cast<byte>(std::atoi(cols[1].c_str()));
+                    bool dup = std::any_of(dev.lights.begin(), dev.lights.end(),
+                        [lid](const AlienFX_SDK::Afx_light& x) { return x.lightid == lid; });
+                    if (dup) continue;
+
                     AlienFX_SDK::Afx_light l{};
-                    l.lightid = static_cast<byte>(std::atoi(cols[1].c_str()));
-                    l.flags = static_cast<WORD>(std::atoi(cols[2].c_str()));
+                    l.lightid = lid;
+                    l.data = static_cast<DWORD>(std::strtoul(cols[2].c_str(), nullptr, 10));
                     l.name = cols[3];
+                    if (isDarfonKeyboard && l.scancode == 0) {
+                        for (const auto& dk : darfonTemplate) {
+                            if (dk.lightid == l.lightid) {
+                                l.scancode = dk.scancode;
+                                if (l.name.empty()) l.name = dk.name;
+                                break;
+                            }
+                        }
+                    }
                     dev.lights.push_back(l);
                     anyAdded = true;
                 }
             }
         }
 
-        // 2. Fallback: populate default probeable zones (0..15) for new/unmapped devices (e.g. 2025 AW-ELC)
+        // 2. Fallback: full per-key layout for Darfon/API_V5 keyboards, or 0..15 zones for other devices
         if (dev.lights.empty()) {
-            for (byte i = 0; i < 16; ++i) {
-                AlienFX_SDK::Afx_light l{};
-                l.lightid = i;
-                l.flags = 0;
-                l.name = "LED Zone " + std::to_string(i);
-                dev.lights.push_back(l);
+            if (isDarfonKeyboard) {
+                dev.lights = darfonTemplate;
+                anyAdded = true;
+            } else {
+                for (byte i = 0; i < 16; ++i) {
+                    AlienFX_SDK::Afx_light l{};
+                    l.lightid = i;
+                    l.flags = 0;
+                    l.name = "LED Zone " + std::to_string(i);
+                    dev.lights.push_back(l);
+                }
+                anyAdded = true;
             }
-            anyAdded = true;
         }
     }
     if (anyAdded) {
@@ -426,6 +550,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (IsWindowVisible(hwnd) && g_webview) {
                 PostJsonToUI(CockpitBridge::BuildTelemetryJson());
             }
+        } else if (wParam == TIMER_EFFECTS) {
+            CockpitBridge::StepAnimatedEffects();
         }
         return 0;
 
@@ -478,6 +604,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_DESTROY:
         KillTimer(hwnd, TIMER_TELEMETRY);
+        KillTimer(hwnd, TIMER_EFFECTS);
         RemoveTrayIcon();
         PostQuitMessage(0);
         return 0;
@@ -559,6 +686,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     InitTrayIcon(hwnd);
     InitWebView(hwnd);
     SetTimer(hwnd, TIMER_TELEMETRY, 1500, nullptr);
+    SetTimer(hwnd, TIMER_EFFECTS, 85, nullptr);
 
     bool startMin = (lpCmdLine && wcsstr(lpCmdLine, L"--minimized") != nullptr);
     if (!startMin) {

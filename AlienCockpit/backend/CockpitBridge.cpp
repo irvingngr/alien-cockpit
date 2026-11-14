@@ -7,6 +7,8 @@
 #include "StartupManager.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -38,17 +40,17 @@ static byte EffectNameToType(const std::string& eff) {
     if (eff == "pulse") return AlienFX_SDK::AlienFX_A_Pulse;
     if (eff == "morph") return AlienFX_SDK::AlienFX_A_Morph;
     if (eff == "spectrum") return AlienFX_SDK::AlienFX_A_Spectrum;
-    if (eff == "rainbow" || eff == "wave") return AlienFX_SDK::AlienFX_A_Rainbow;
+    if (eff == "rainbow" || eff == "wave" || eff == "aurora") return AlienFX_SDK::AlienFX_A_Rainbow;
     return AlienFX_SDK::AlienFX_A_Color;
 }
 
-static std::string EffectTypeToName(byte t) {
+static std::string EffectTypeToName(byte t, size_t colorCount = 1) {
     switch (t) {
     case AlienFX_SDK::AlienFX_A_Breathing: return "breathing";
     case AlienFX_SDK::AlienFX_A_Pulse: return "pulse";
     case AlienFX_SDK::AlienFX_A_Morph: return "morph";
     case AlienFX_SDK::AlienFX_A_Spectrum: return "spectrum";
-    case AlienFX_SDK::AlienFX_A_Rainbow: return "wave";
+    case AlienFX_SDK::AlienFX_A_Rainbow: return (colorCount >= 3) ? "aurora" : "wave";
     default: return "static";
     }
 }
@@ -203,8 +205,14 @@ std::string CockpitBridge::BuildFullStateJson() {
         d["present"] = (dev.dev != nullptr);
         d["version"] = dev.dev ? dev.dev->version : -1;
 
+        std::vector<AlienFX_SDK::Afx_light> sortedLights = dev.lights;
+        std::sort(sortedLights.begin(), sortedLights.end(),
+            [](const AlienFX_SDK::Afx_light& a, const AlienFX_SDK::Afx_light& b) {
+                return a.lightid < b.lightid;
+            });
+
         SimpleJson::Value lights = SimpleJson::Value::Array();
-        for (const auto& l : dev.lights) {
+        for (const auto& l : sortedLights) {
             SimpleJson::Value lo = SimpleJson::Value::Object();
             lo["id"] = static_cast<int>(l.lightid);
             lo["name"] = l.name;
@@ -252,10 +260,12 @@ std::string CockpitBridge::BuildFullStateJson() {
 
             if (!gs.color.empty()) {
                 gso["color"] = ColorToHex(gs.color[0].r, gs.color[0].g, gs.color[0].b);
-                gso["effect"] = EffectTypeToName(gs.color[0].type);
+                gso["effect"] = EffectTypeToName(gs.color[0].type, gs.color.size());
                 gso["speed"] = static_cast<int>(gs.color[0].tempo);
                 if (gs.color.size() > 1)
                     gso["color2"] = ColorToHex(gs.color[1].r, gs.color[1].g, gs.color[1].b);
+                if (gs.color.size() > 2)
+                    gso["color3"] = ColorToHex(gs.color[2].r, gs.color[2].g, gs.color[2].b);
             } else {
                 gso["color"] = "#00f0ff";
                 gso["effect"] = "static";
@@ -364,60 +374,137 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         }
 
         if (conf->activeProfile && pid && !lightIds.empty()) {
+            conf->modifyProfile.lockWrite();
+
+            auto isGroupShared = [&](DWORD gid) {
+                int refs = 0;
+                for (const auto* prof : conf->profiles) {
+                    if (!prof) continue;
+                    for (const auto& ls : prof->lightsets) {
+                        if (ls.group == static_cast<int>(gid)) {
+                            ++refs;
+                            break;
+                        }
+                    }
+                }
+                return refs > 1;
+            };
+
+            auto* groupsVec = conf->afx_dev.GetGroups();
+            auto allocGroupId = [&]() -> DWORD {
+                DWORD maxGid = 0x10000;
+                if (groupsVec) {
+                    for (const auto& g : *groupsVec) {
+                        if (g.gid >= maxGid) maxGid = g.gid + 1;
+                    }
+                }
+                return maxGid;
+            };
+
             // Remove newly-targeted (pid, lid) pairs from existing groups in active profile so they don't conflict
             for (auto it = conf->activeProfile->lightsets.begin(); it != conf->activeProfile->lightsets.end(); ) {
                 AlienFX_SDK::Afx_group* existingGrp = conf->afx_dev.GetGroupById(it->group);
                 if (existingGrp) {
-                    for (auto lit = existingGrp->lights.begin(); lit != existingGrp->lights.end(); ) {
-                        bool match = false;
-                        if (lit->did == pid) {
+                    bool touchesTarget = false;
+                    for (const auto& gl : existingGrp->lights) {
+                        if (gl.did == pid) {
                             for (const auto& lidVal : lightIds) {
-                                if (lit->lid == static_cast<WORD>(lidVal.asInt(0))) {
-                                    match = true;
+                                if (gl.lid == static_cast<WORD>(lidVal.asInt(0))) {
+                                    touchesTarget = true;
                                     break;
                                 }
                             }
                         }
-                        if (match) lit = existingGrp->lights.erase(lit);
-                        else ++lit;
+                        if (touchesTarget) break;
                     }
-                    if (existingGrp->lights.empty()) {
-                        it = conf->activeProfile->lightsets.erase(it);
-                        continue;
+
+                    if (touchesTarget && groupsVec && isGroupShared(existingGrp->gid)) {
+                        // Clone group for active profile before mutating so other profiles keep their layout
+                        AlienFX_SDK::Afx_group cloned = *existingGrp;
+                        cloned.gid = allocGroupId();
+                        groupsVec->push_back(cloned);
+                        it->group = static_cast<int>(cloned.gid);
+                        existingGrp = conf->afx_dev.GetGroupById(cloned.gid);
+                    }
+
+                    if (existingGrp) {
+                        for (auto lit = existingGrp->lights.begin(); lit != existingGrp->lights.end(); ) {
+                            bool match = false;
+                            if (lit->did == pid) {
+                                for (const auto& lidVal : lightIds) {
+                                    if (lit->lid == static_cast<WORD>(lidVal.asInt(0))) {
+                                        match = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (match) lit = existingGrp->lights.erase(lit);
+                            else ++lit;
+                        }
+                        if (existingGrp->lights.empty()) {
+                            it = conf->activeProfile->lightsets.erase(it);
+                            continue;
+                        }
                     }
                 }
                 ++it;
             }
 
+            // Build deduplicated light list for new/updated group
+            std::vector<AlienFX_SDK::Afx_groupLight> targetLights;
+            for (const auto& lidVal : lightIds) {
+                WORD lid = static_cast<WORD>(lidVal.asInt(0));
+                bool dup = false;
+                for (const auto& existing : targetLights) {
+                    if (existing.did == pid && existing.lid == lid) { dup = true; break; }
+                }
+                if (!dup) {
+                    AlienFX_SDK::Afx_groupLight gl{};
+                    gl.did = pid;
+                    gl.lid = lid;
+                    targetLights.push_back(gl);
+                }
+            }
+
             // Find or create group for this zone
             DWORD targetGid = static_cast<DWORD>(msg.get("groupId").asInt(0));
             AlienFX_SDK::Afx_group* grp = targetGid ? conf->afx_dev.GetGroupById(targetGid) : nullptr;
-            if (!grp) {
-                DWORD maxGid = 0x10000;
-                auto* groupsVec = conf->afx_dev.GetGroups();
+            if (!grp || isGroupShared(targetGid)) {
+                DWORD newGid = allocGroupId();
                 if (groupsVec) {
-                    for (const auto& g : *groupsVec) {
-                        if (g.gid >= maxGid) maxGid = g.gid + 1;
-                    }
                     AlienFX_SDK::Afx_group newGrp;
-                    newGrp.gid = maxGid;
+                    newGrp.gid = newGid;
                     newGrp.name = zoneName;
-                    for (const auto& lidVal : lightIds) {
-                        AlienFX_SDK::Afx_groupLight gl;
-                        gl.did = pid;
-                        gl.lid = static_cast<WORD>(lidVal.asInt(0));
-                        newGrp.lights.push_back(gl);
-                    }
+                    newGrp.lights = targetLights;
                     groupsVec->push_back(newGrp);
                 }
-                targetGid = maxGid;
+                targetGid = newGid;
             } else {
-                grp->lights.clear();
-                for (const auto& lidVal : lightIds) {
-                    AlienFX_SDK::Afx_groupLight gl;
-                    gl.did = pid;
-                    gl.lid = static_cast<WORD>(lidVal.asInt(0));
-                    grp->lights.push_back(gl);
+                grp->name = zoneName;
+                grp->lights = targetLights;
+            }
+
+            // Prune orphaned groups no longer referenced by any profile
+            if (groupsVec) {
+                for (auto git = groupsVec->begin(); git != groupsVec->end(); ) {
+                    bool referenced = (git->gid == targetGid);
+                    if (!referenced) {
+                        for (const auto* prof : conf->profiles) {
+                            if (!prof) continue;
+                            for (const auto& ls : prof->lightsets) {
+                                if (ls.group == static_cast<int>(git->gid)) {
+                                    referenced = true;
+                                    break;
+                                }
+                            }
+                            if (referenced) break;
+                        }
+                    }
+                    if (!referenced && git->gid >= 0x10000) {
+                        git = groupsVec->erase(git);
+                    } else {
+                        ++git;
+                    }
                 }
             }
 
@@ -464,8 +551,11 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 targetSet->color.push_back(act3);
             }
 
+            conf->modifyProfile.unlockWrite();
+
             fxhl->ClearAndRefresh(true);
             conf->Save();
+            conf->afx_dev.SaveMappings();
         }
         return BuildFullStateJson();
     }
@@ -516,6 +606,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                     break;
                 }
             }
+            conf->afx_dev.SaveMappings();
             conf->Save();
         }
         return BuildFullStateJson();
@@ -526,6 +617,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         profile* p = conf->FindProfile(id);
         if (p) {
             eve->SwitchActiveProfile(p, true);
+            conf->Save();
         }
         return BuildFullStateJson();
     }
@@ -615,3 +707,116 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
     return "{\"ok\":false,\"error\":\"unknown_command\"}";
 }
+
+static void HsvToRgb(double hDeg, double s, double v, byte& r, byte& g, byte& b) {
+    double h = std::fmod(hDeg, 360.0);
+    if (h < 0.0) h += 360.0;
+    double c = v * s;
+    double x = c * (1.0 - std::fabs(std::fmod(h / 60.0, 2.0) - 1.0));
+    double m = v - c;
+    double rp = 0, gp = 0, bp = 0;
+    if (h < 60.0) { rp = c; gp = x; }
+    else if (h < 120.0) { rp = x; gp = c; }
+    else if (h < 180.0) { gp = c; bp = x; }
+    else if (h < 240.0) { gp = x; bp = c; }
+    else if (h < 300.0) { rp = x; bp = c; }
+    else { rp = c; bp = x; }
+    r = static_cast<byte>(std::clamp((rp + m) * 255.0, 0.0, 255.0));
+    g = static_cast<byte>(std::clamp((gp + m) * 255.0, 0.0, 255.0));
+    b = static_cast<byte>(std::clamp((bp + m) * 255.0, 0.0, 255.0));
+}
+
+static AlienFX_SDK::Afx_action LerpColor(const AlienFX_SDK::Afx_action& a, const AlienFX_SDK::Afx_action& b, double t) {
+    t = std::clamp(t, 0.0, 1.0);
+    AlienFX_SDK::Afx_action out{};
+    out.type = AlienFX_SDK::AlienFX_A_Color;
+    out.r = static_cast<byte>(std::clamp(a.r + (b.r - a.r) * t, 0.0, 255.0));
+    out.g = static_cast<byte>(std::clamp(a.g + (b.g - a.g) * t, 0.0, 255.0));
+    out.b = static_cast<byte>(std::clamp(a.b + (b.b - a.b) * t, 0.0, 255.0));
+    return out;
+}
+
+void CockpitBridge::StepAnimatedEffects() {
+    if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return;
+
+    double nowSec = static_cast<double>(GetTickCount64()) / 1000.0;
+    bool anyAnimated = false;
+
+    conf->modifyProfile.lockRead();
+    for (const auto& ls : conf->activeProfile->lightsets) {
+        if (ls.color.empty()) continue;
+        byte effType = ls.color[0].type;
+        if (effType == AlienFX_SDK::AlienFX_A_Color) continue;
+
+        AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(ls.group);
+        if (!grp || grp->lights.empty()) continue;
+
+        const auto& c1 = ls.color[0];
+        AlienFX_SDK::Afx_action c2 = (ls.color.size() > 1) ? ls.color[1] : AlienFX_SDK::Afx_action{ 0 };
+        AlienFX_SDK::Afx_action c3 = (ls.color.size() > 2) ? ls.color[2] : c1;
+        double speedNorm = 0.4 + (static_cast<double>(c1.tempo) / 100.0) * 2.4;
+        double phase = nowSec * speedNorm;
+        bool isAurora = (effType == AlienFX_SDK::AlienFX_A_Rainbow && ls.color.size() >= 3);
+
+        for (const auto& gl : grp->lights) {
+            AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(gl.did);
+            if (!dev || !dev->present || !dev->dev) continue;
+            // API_V5 & API_ACPI lack autonomous per-light effect engines; drive them smoothly in software.
+            // Also drive Aurora on all devices since it's a custom 3-color multi-wave effect.
+            if (dev->dev->version != AlienFX_SDK::API_V5 &&
+                dev->dev->version != AlienFX_SDK::API_ACPI &&
+                !isAurora) {
+                continue;
+            }
+            fxhl->modifyQuery.lockRead();
+            auto qIt = fxhl->devLightQuery.find(dev->pid);
+            size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+            fxhl->modifyQuery.unlockRead();
+            if (qSize > 12) {
+                continue;
+            }
+
+            AlienFX_SDK::Afx_action frame{};
+            frame.type = AlienFX_SDK::AlienFX_A_Color;
+            double colPos = static_cast<double>(gl.lid % 20) * 0.25 + static_cast<double>(gl.lid / 20) * 0.35;
+
+            if (isAurora) {
+                // Organic multi-wave Aurora Borealis shimmer across keys
+                double w1 = 0.5 + 0.5 * std::sin(phase * 1.4 + colPos * 0.75);
+                double w2 = 0.5 + 0.5 * std::sin(phase * 0.85 - colPos * 0.5 + 1.7);
+                AlienFX_SDK::Afx_action mix12 = LerpColor(c1, c2, w1);
+                frame = LerpColor(mix12, c3, w2 * 0.65);
+            } else if (effType == AlienFX_SDK::AlienFX_A_Breathing) {
+                double k = 0.05 + 0.95 * (0.5 - 0.5 * std::cos(phase * 2.2));
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, c1, k);
+            } else if (effType == AlienFX_SDK::AlienFX_A_Pulse) {
+                double frac = std::fmod(phase * 0.8, 1.0);
+                double k = std::exp(-frac * 4.5);
+                frame = LerpColor(c2, c1, k);
+            } else if (effType == AlienFX_SDK::AlienFX_A_Morph) {
+                double k = 0.5 - 0.5 * std::cos(phase * 1.6);
+                frame = LerpColor(c1, c2, k);
+            } else if (effType == AlienFX_SDK::AlienFX_A_Spectrum) {
+                double hue = std::fmod(phase * 45.0, 360.0);
+                HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
+            } else if (effType == AlienFX_SDK::AlienFX_A_Rainbow) {
+                double hue = std::fmod(phase * 55.0 + colPos * 28.0, 360.0);
+                HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
+            } else {
+                frame = c1;
+                frame.type = AlienFX_SDK::AlienFX_A_Color;
+            }
+
+            std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+            fxhl->SetLight(gl.lgh, &acts);
+            anyAnimated = true;
+        }
+    }
+    conf->modifyProfile.unlockRead();
+
+    if (anyAnimated) {
+        fxhl->QueryUpdate();
+    }
+}
+

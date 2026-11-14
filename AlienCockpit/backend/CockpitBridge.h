@@ -7,4 +7,5 @@ public:
     static std::string HandleMessage(const std::string& jsonMessage);
     static std::string BuildTelemetryJson();
     static std::string BuildFullStateJson();
+    static void StepAnimatedEffects();
 };

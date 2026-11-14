@@ -6,7 +6,7 @@ const state = {
   profiles: [],
   activeProfileId: 0,
   settings: { lightsOn: true, brightness: 255, startWindows: false, startMinimized: true },
-  selectedTargets: new Set(), // key IDs or zone IDs
+  selectedTargets: new Set(), // canonical key IDs or zone IDs
   selectedHwLights: new Set(), // direct physical LED IDs from Hardware LED Mapper
   selectedDevicePid: 0,
   activeView: 'keyboard',
@@ -31,7 +31,6 @@ function sendCommand(payload) {
   if (hasWebView) {
     window.chrome.webview.postMessage(payload);
   } else {
-    // Local browser preview fallback
     console.log('[Preview Mode] Command:', payload);
   }
 }
@@ -48,47 +47,266 @@ if (hasWebView) {
   });
 }
 
-// ANSI Full/Laptop Keyboard Layout
+// ANSI Full Laptop Keyboard Layout matching physical Darfon 0x0D62 per-key LED IDs
 const KEYBOARD_ROWS = [
   [
-    { id: 1, label: 'ESC', group: 'mods' }, { id: 59, label: 'F1', group: 'fn' }, { id: 60, label: 'F2', group: 'fn' },
-    { id: 61, label: 'F3', group: 'fn' }, { id: 62, label: 'F4', group: 'fn' }, { id: 63, label: 'F5', group: 'fn' },
-    { id: 64, label: 'F6', group: 'fn' }, { id: 65, label: 'F7', group: 'fn' }, { id: 66, label: 'F8', group: 'fn' },
-    { id: 67, label: 'F9', group: 'fn' }, { id: 68, label: 'F10', group: 'fn' }, { id: 87, label: 'F11', group: 'fn' },
-    { id: 88, label: 'F12', group: 'fn' }, { id: 83, label: 'DEL', group: 'mods' }
+    { id: 'esc', label: 'ESC', lids: [0], vk: 27, aliases: ['esc', 'escape'], group: 'mods' },
+    { id: 'f1', label: 'F1', lids: [1], vk: 112, aliases: ['f1'], group: 'fn' },
+    { id: 'f2', label: 'F2', lids: [2], vk: 113, aliases: ['f2'], group: 'fn' },
+    { id: 'f3', label: 'F3', lids: [3], vk: 114, aliases: ['f3'], group: 'fn' },
+    { id: 'f4', label: 'F4', lids: [4], vk: 115, aliases: ['f4'], group: 'fn' },
+    { id: 'f5', label: 'F5', lids: [5], vk: 116, aliases: ['f5'], group: 'fn' },
+    { id: 'f6', label: 'F6', lids: [6], vk: 117, aliases: ['f6'], group: 'fn' },
+    { id: 'f7', label: 'F7', lids: [7], vk: 118, aliases: ['f7'], group: 'fn' },
+    { id: 'f8', label: 'F8', lids: [8], vk: 119, aliases: ['f8'], group: 'fn' },
+    { id: 'f9', label: 'F9', lids: [9], vk: 120, aliases: ['f9'], group: 'fn' },
+    { id: 'f10', label: 'F10', lids: [10], vk: 121, aliases: ['f10'], group: 'fn' },
+    { id: 'f11', label: 'F11', lids: [11], vk: 122, aliases: ['f11'], group: 'fn' },
+    { id: 'f12', label: 'F12', lids: [12], vk: 123, aliases: ['f12'], group: 'fn' },
+    { id: 'home', label: 'HOME', lids: [13], vk: 292, aliases: ['home'], group: 'mods' },
+    { id: 'end', label: 'END', lids: [14], vk: 291, aliases: ['end'], group: 'mods' },
+    { id: 'del', label: 'DEL', lids: [15], vk: 302, aliases: ['del', 'delete'], group: 'mods' }
   ],
   [
-    { id: 41, label: '`' }, { id: 2, label: '1' }, { id: 3, label: '2' }, { id: 4, label: '3' },
-    { id: 5, label: '4' }, { id: 6, label: '5' }, { id: 7, label: '6' }, { id: 8, label: '7' },
-    { id: 9, label: '8' }, { id: 10, label: '9' }, { id: 11, label: '0' }, { id: 12, label: '-' },
-    { id: 13, label: '=' }, { id: 14, label: 'BKSP', cls: 'w-2', group: 'mods' }
+    { id: 'tilde', label: '`', lids: [20], vk: 192, aliases: ['`', 'tilde'] },
+    { id: '1', label: '1', lids: [21], vk: 49, aliases: ['1'] },
+    { id: '2', label: '2', lids: [22], vk: 50, aliases: ['2'] },
+    { id: '3', label: '3', lids: [23], vk: 51, aliases: ['3'] },
+    { id: '4', label: '4', lids: [24], vk: 52, aliases: ['4'] },
+    { id: '5', label: '5', lids: [25], vk: 53, aliases: ['5'] },
+    { id: '6', label: '6', lids: [26], vk: 54, aliases: ['6'] },
+    { id: '7', label: '7', lids: [27], vk: 55, aliases: ['7'] },
+    { id: '8', label: '8', lids: [28], vk: 56, aliases: ['8'] },
+    { id: '9', label: '9', lids: [29], vk: 57, aliases: ['9'] },
+    { id: '0', label: '0', lids: [30], vk: 48, aliases: ['0'] },
+    { id: 'minus', label: '-', lids: [31], vk: 189, aliases: ['-'] },
+    { id: 'equals', label: '=', lids: [32], vk: 187, aliases: ['='] },
+    { id: 'bksp', label: 'BKSP', cls: 'w-2', lids: [34, 35, 33], vk: 8, aliases: ['backspace', 'backspace 2'], group: 'mods' }
   ],
   [
-    { id: 15, label: 'TAB', cls: 'w-15', group: 'mods' }, { id: 16, label: 'Q' }, { id: 17, label: 'W', group: 'wasd' },
-    { id: 18, label: 'E' }, { id: 19, label: 'R' }, { id: 20, label: 'T' }, { id: 21, label: 'Y' },
-    { id: 22, label: 'U' }, { id: 23, label: 'I' }, { id: 24, label: 'O' }, { id: 25, label: 'P' },
-    { id: 26, label: '[' }, { id: 27, label: ']' }, { id: 43, label: '\\', cls: 'w-15' }
+    { id: 'tab', label: 'TAB', cls: 'w-15', lids: [40, 41], vk: 9, aliases: ['tab', 'tab 2'], group: 'mods' },
+    { id: 'q', label: 'Q', lids: [42], vk: 81, aliases: ['q'] },
+    { id: 'w', label: 'W', lids: [43], vk: 87, aliases: ['w'], group: 'wasd' },
+    { id: 'e', label: 'E', lids: [44], vk: 69, aliases: ['e'] },
+    { id: 'r', label: 'R', lids: [45], vk: 82, aliases: ['r'] },
+    { id: 't', label: 'T', lids: [46], vk: 84, aliases: ['t'] },
+    { id: 'y', label: 'Y', lids: [47], vk: 89, aliases: ['y'] },
+    { id: 'u', label: 'U', lids: [48], vk: 85, aliases: ['u'] },
+    { id: 'i', label: 'I', lids: [49], vk: 73, aliases: ['i'] },
+    { id: 'o', label: 'O', lids: [50], vk: 79, aliases: ['o'] },
+    { id: 'p', label: 'P', lids: [51], vk: 80, aliases: ['p'] },
+    { id: 'lbracket', label: '[', lids: [52], vk: 219, aliases: ['['] },
+    { id: 'rbracket', label: ']', lids: [53], vk: 221, aliases: [']'] },
+    { id: 'backslash', label: '\\', cls: 'w-15', lids: [55, 54], vk: 220, aliases: ['\\', '\\ 2'] }
   ],
   [
-    { id: 58, label: 'CAPS', cls: 'w-175', group: 'mods' }, { id: 30, label: 'A', group: 'wasd' },
-    { id: 31, label: 'S', group: 'wasd' }, { id: 32, label: 'D', group: 'wasd' }, { id: 33, label: 'F' },
-    { id: 34, label: 'G' }, { id: 35, label: 'H' }, { id: 36, label: 'J' }, { id: 37, label: 'K' },
-    { id: 38, label: 'L' }, { id: 39, label: ';' }, { id: 40, label: "'" },
-    { id: 28, label: 'ENTER', cls: 'w-225', group: 'mods' }
+    { id: 'caps', label: 'CAPS', cls: 'w-175', lids: [60, 61], vk: 20, aliases: ['caps lock', 'caps lock 2'], group: 'mods' },
+    { id: 'a', label: 'A', lids: [62], vk: 65, aliases: ['a'], group: 'wasd' },
+    { id: 's', label: 'S', lids: [63], vk: 83, aliases: ['s'], group: 'wasd' },
+    { id: 'd', label: 'D', lids: [64], vk: 68, aliases: ['d'], group: 'wasd' },
+    { id: 'f', label: 'F', lids: [65], vk: 70, aliases: ['f'] },
+    { id: 'g', label: 'G', lids: [66], vk: 71, aliases: ['g'] },
+    { id: 'h', label: 'H', lids: [67], vk: 72, aliases: ['h'] },
+    { id: 'j', label: 'J', lids: [68], vk: 74, aliases: ['j'] },
+    { id: 'k', label: 'K', lids: [69], vk: 75, aliases: ['k'] },
+    { id: 'l', label: 'L', lids: [70], vk: 76, aliases: ['l'] },
+    { id: 'semicolon', label: ';', lids: [71], vk: 186, aliases: [';'] },
+    { id: 'quote', label: "'", lids: [72], vk: 222, aliases: ["'"] },
+    { id: 'enter', label: 'ENTER', cls: 'w-225', lids: [74, 73, 75], vk: 13, aliases: ['enter', 'enter 2'], group: 'mods' }
   ],
   [
-    { id: 42, label: 'SHIFT', cls: 'w-225', group: 'mods' }, { id: 44, label: 'Z' }, { id: 45, label: 'X' },
-    { id: 46, label: 'C' }, { id: 47, label: 'V' }, { id: 48, label: 'B' }, { id: 49, label: 'N' },
-    { id: 50, label: 'M' }, { id: 51, label: ',' }, { id: 52, label: '.' }, { id: 53, label: '/' },
-    { id: 54, label: 'RSHIFT', cls: 'w-175', group: 'mods' }, { id: 72, label: '▲', group: 'arrows' }
+    { id: 'lshift', label: 'SHIFT', cls: 'w-225', lids: [80, 81, 82], vk: 160, aliases: ['shift', 'shift 2', 'left shift'], group: 'mods' },
+    { id: 'z', label: 'Z', lids: [83], vk: 90, aliases: ['z'] },
+    { id: 'x', label: 'X', lids: [84], vk: 88, aliases: ['x'] },
+    { id: 'c', label: 'C', lids: [85], vk: 67, aliases: ['c'] },
+    { id: 'v', label: 'V', lids: [86], vk: 86, aliases: ['v'] },
+    { id: 'b', label: 'B', lids: [87], vk: 66, aliases: ['b'] },
+    { id: 'n', label: 'N', lids: [88], vk: 78, aliases: ['n'] },
+    { id: 'm', label: 'M', lids: [89], vk: 77, aliases: ['m'] },
+    { id: 'comma', label: ',', lids: [90], vk: 188, aliases: [','] },
+    { id: 'period', label: '.', lids: [91], vk: 190, aliases: ['.'] },
+    { id: 'slash', label: '/', lids: [92], vk: 191, aliases: ['/'] },
+    { id: 'rshift', label: 'RSHIFT', cls: 'w-175', lids: [94, 93], vk: 417, aliases: ['right shift', 'right shift 2'], group: 'mods' },
+    { id: 'up', label: '▲', lids: [114], vk: 294, aliases: ['up'], group: 'arrows' }
   ],
   [
-    { id: 29, label: 'CTRL', cls: 'w-15', group: 'mods' }, { id: 91, label: 'WIN', group: 'mods' },
-    { id: 56, label: 'ALT', cls: 'w-15', group: 'mods' }, { id: 57, label: 'SPACE', cls: 'w-6' },
-    { id: 100, label: 'RALT', group: 'mods' }, { id: 101, label: 'FN', group: 'mods' },
-    { id: 75, label: '◀', group: 'arrows' }, { id: 80, label: '▼', group: 'arrows' }, { id: 77, label: '▶', group: 'arrows' }
+    { id: 'lctrl', label: 'CTRL', cls: 'w-125', lids: [100], vk: 162, aliases: ['ctrl', 'lctrl', 'left ctrl'], group: 'mods' },
+    { id: 'fn', label: 'FN', lids: [101], vk: 255, aliases: ['fn'], group: 'mods' },
+    { id: 'lwin', label: 'WIN', lids: [102, 103], vk: 347, aliases: ['left windows', 'left windows 2', 'win'], group: 'mods' },
+    { id: 'lalt', label: 'ALT', lids: [104], vk: 164, aliases: ['alt', 'lalt', 'left alt'], group: 'mods' },
+    { id: 'space', label: 'SPACE', cls: 'w-55', lids: [106, 107, 105, 108], vk: 32, aliases: ['space', 'space 2', 'space 3', 'space 4'] },
+    { id: 'ralt', label: 'RALT', lids: [111], vk: 421, aliases: ['right alt', 'ralt'], group: 'mods' },
+    { id: 'copilot', label: 'CP', cls: 'w-125', lids: [109, 112], vk: 348, aliases: ['right windows', 'right ctrl', 'rctrl', 'copilot', 'win lock', 'menu'], group: 'mods' },
+    { id: 'left', label: '◀', lids: [133], vk: 293, aliases: ['left'], group: 'arrows' },
+    { id: 'down', label: '▼', lids: [134], vk: 296, aliases: ['down'], group: 'arrows' },
+    { id: 'right', label: '▶', lids: [135], vk: 295, aliases: ['right'], group: 'arrows' }
   ]
 ];
+
+// 6-row Numpad including top media keys (aligned flush with main keyboard)
+const NUMPAD_KEYS = [
+  { id: 'mute', label: 'MUTE', lids: [16], vk: 173, aliases: ['mute', 'mic mute'], name: 'Mute', group: 'numpad' },
+  { id: 'vol_dn', label: 'VOL-', lids: [17], vk: 430, aliases: ['volumedn', 'vol down', 'vol-'], name: 'Volume -', group: 'numpad' },
+  { id: 'vol_up', label: 'VOL+', lids: [18], vk: 431, aliases: ['volumeup', 'vol up', 'vol+'], name: 'Volume +', group: 'numpad' },
+  { id: 'mic', label: 'MIC', lids: [19], vk: 0, aliases: ['microphone', 'mic', 'mic mute'], name: 'Mic / Aux', group: 'numpad' },
+  { id: 'num_lock', label: 'NUM', lids: [36], vk: 400, aliases: ['num lock', 'numlock'], name: 'Num Lock', group: 'numpad' },
+  { id: 'num_div', label: '/', lids: [37], vk: 367, aliases: ['num /'], name: 'Num /', group: 'numpad' },
+  { id: 'num_mul', label: '*', lids: [38], vk: 106, aliases: ['num *'], name: 'Num *', group: 'numpad' },
+  { id: 'num_sub', label: '-', lids: [39], vk: 109, aliases: ['num -'], name: 'Num -', group: 'numpad' },
+  { id: 'num_7', label: '7', lids: [56], vk: 103, aliases: ['num 7'], name: 'Num 7', group: 'numpad' },
+  { id: 'num_8', label: '8', lids: [57], vk: 104, aliases: ['num 8'], name: 'Num 8', group: 'numpad' },
+  { id: 'num_9', label: '9', lids: [58], vk: 105, aliases: ['num 9'], name: 'Num 9', group: 'numpad' },
+  { id: 'num_add', label: '+', cls: 'num-tall', lids: [79, 59], vk: 107, aliases: ['num +', 'num + 2'], name: 'Num +', group: 'numpad' },
+  { id: 'num_4', label: '4', lids: [76], vk: 100, aliases: ['num 4'], name: 'Num 4', group: 'numpad' },
+  { id: 'num_5', label: '5', lids: [77], vk: 101, aliases: ['num 5'], name: 'Num 5', group: 'numpad' },
+  { id: 'num_6', label: '6', lids: [78], vk: 102, aliases: ['num 6'], name: 'Num 6', group: 'numpad' },
+  { id: 'num_1', label: '1', lids: [96], vk: 97, aliases: ['num 1'], name: 'Num 1', group: 'numpad' },
+  { id: 'num_2', label: '2', lids: [97], vk: 98, aliases: ['num 2'], name: 'Num 2', group: 'numpad' },
+  { id: 'num_3', label: '3', lids: [98], vk: 99, aliases: ['num 3'], name: 'Num 3', group: 'numpad' },
+  { id: 'num_ent', label: 'ENT', cls: 'num-tall', lids: [99, 119], vk: 269, aliases: ['num enter', 'num enter 2'], name: 'Num Enter', group: 'numpad' },
+  { id: 'num_0', label: '0', cls: 'num-wide', lids: [116, 117], vk: 96, aliases: ['num 0', 'num 0 2'], name: 'Num 0', group: 'numpad' },
+  { id: 'num_dot', label: '.', lids: [118], vk: 110, aliases: ['num del .', 'num .'], name: 'Num .', group: 'numpad' }
+];
+
+const ALL_KEY_DEFS = [...KEYBOARD_ROWS.flat(), ...NUMPAD_KEYS];
+const KEY_BY_ID = new Map(ALL_KEY_DEFS.map((k) => [k.id, k]));
+
+function isKeyboardDevice(dev) {
+  if (!dev) return false;
+  return dev.vid === 0x0d62 || dev.version === 5 || (dev.lights && dev.lights.length > 20) ||
+    /key|kbd|darfon/i.test(dev.name || '');
+}
+
+function isMouseDevice(dev) {
+  if (!dev) return false;
+  return /mouse|aw\d*m|310m|510m|610m|620m|720m|920m/i.test(dev.name || '');
+}
+
+function isChassisDevice(dev) {
+  if (!dev) return false;
+  return /elc|chassis|tron|lightbar|laptop|aurora|desktop/i.test(dev.name || '') ||
+    (!isKeyboardDevice(dev) && !isMouseDevice(dev));
+}
+
+function isPerKeyKeyboard(dev) {
+  return !!(dev && dev.lights && dev.lights.length > 20);
+}
+
+function getTargetDeviceForView(view = state.activeView) {
+  const cur = state.devices.find((d) => d.pid === state.selectedDevicePid);
+  const matcher = view === 'keyboard' ? isKeyboardDevice : view === 'mouse' ? isMouseDevice : isChassisDevice;
+  if (cur && matcher(cur)) return cur;
+
+  const presentMatch = state.devices.find((d) => d.present && matcher(d));
+  if (presentMatch) return presentMatch;
+
+  const anyMatch = state.devices.find((d) => matcher(d));
+  if (anyMatch) return anyMatch;
+
+  return view === 'keyboard' ? (cur || state.devices[0] || null) : null;
+}
+
+function findLightsForKey(keyDef, dev) {
+  if (!keyDef || !dev || !dev.lights || dev.lights.length === 0) return [];
+  const lights = dev.lights;
+  const matched = [];
+  const byId = new Set(lights.map((l) => l.id));
+
+  // 1. Direct Darfon / per-key physical LED ID match
+  if (isPerKeyKeyboard(dev) || dev.vid === 0x0d62 || dev.version === 5) {
+    (keyDef.lids || []).forEach((lid) => {
+      if (byId.has(lid)) matched.push(lid);
+    });
+    if (matched.length > 0) return Array.from(new Set(matched));
+  }
+
+  // 2. Exact normalized alias match (prevents 'f' matching 'fn' or 'f1')
+  const aliases = new Set((keyDef.aliases || [keyDef.label]).map((s) => s.trim().toLowerCase()));
+  lights.forEach((l) => {
+    const lname = (l.name || '').trim().toLowerCase();
+    if (lname && aliases.has(lname)) matched.push(l.id);
+  });
+  if (matched.length > 0) return Array.from(new Set(matched));
+
+  // 3. Windows extended VK scancode fallback with FN/'F' collision guard
+  if (keyDef.vk > 0) {
+    lights.forEach((l) => {
+      if (l.scancode !== keyDef.vk) return;
+      const lname = (l.name || '').trim().toLowerCase();
+      if (keyDef.id === 'fn' && lname === 'f') return;
+      if (keyDef.id === 'f' && lname === 'fn') return;
+      matched.push(l.id);
+    });
+  }
+  return Array.from(new Set(matched));
+}
+
+function findTouchpadLights() {
+  const hits = [];
+  const ordered = [...state.devices].sort((a, b) => (isKeyboardDevice(a) ? 1 : 0) - (isKeyboardDevice(b) ? 1 : 0));
+  ordered.forEach((dev) => {
+    (dev.lights || []).forEach((l) => {
+      if (/touchpad|trackpad|\bpad\b/i.test(l.name || '')) {
+        hits.push({ pid: dev.pid, lid: l.id });
+      }
+    });
+  });
+  return hits;
+}
+
+function findLightsForZone(zoneId, zoneName, dev) {
+  if (!dev || !dev.lights || dev.lights.length === 0) return [];
+  const nonInd = dev.lights.filter((l) => !(l.flags & 3));
+  const usable = nonInd.length > 0 ? nonInd : dev.lights;
+  const numZid = parseInt(zoneId, 10);
+
+  const kwRules = [
+    [/scroll|wheel/i, /scroll|wheel/i],
+    [/dpi/i, /dpi/i],
+    [/palm|lid|emblem/i, /logo|emblem|head|palm|lid/i],
+    [/rear|exhaust/i, /rear|exhaust|tron|back/i],
+    [/front|lightbar/i, /front|lightbar|bar/i],
+    [/underglow/i, /underglow|bottom|rear/i],
+    [/left/i, /left/i],
+    [/right/i, /right/i]
+  ];
+  for (const [zRe, lRe] of kwRules) {
+    if (zRe.test(zoneName || '')) {
+      const nameHits = usable.filter((l) => lRe.test(l.name || '')).map((l) => l.id);
+      if (nameHits.length > 0) return nameHits;
+    }
+  }
+
+  if (!Number.isNaN(numZid)) {
+    const exact = dev.lights.find((l) => l.id === numZid);
+    if (exact) return [exact.id];
+    const baseIdx = numZid >= 10 ? numZid - 10 : numZid;
+    return [usable[baseIdx % usable.length].id];
+  }
+  return [];
+}
+
+function applyKeyVisualStyle(el, color) {
+  if (!el) return;
+  if (color) {
+    el.style.boxShadow = `inset 0 -3px 0 ${color}, 0 0 12px ${color}55`;
+    el.style.borderColor = `${color}88`;
+  } else {
+    el.style.boxShadow = '';
+    el.style.borderColor = '';
+  }
+}
+
+function applyTouchpadVisualStyle(tpEl, color) {
+  if (!tpEl) return;
+  if (color) {
+    tpEl.style.borderColor = color;
+    tpEl.style.boxShadow = `0 0 18px ${color}55, inset 0 0 18px ${color}33`;
+  } else {
+    tpEl.style.borderColor = 'rgba(0, 240, 255, 0.25)';
+    tpEl.style.boxShadow = 'none';
+  }
+}
 
 function buildKeyboard() {
   const container = document.getElementById('kbd-grid');
@@ -103,21 +321,21 @@ function buildKeyboard() {
       btn.className = `keycap ${key.cls || ''}`;
       btn.textContent = key.label;
       btn.dataset.id = key.id;
-      btn.dataset.name = key.label;
+      btn.dataset.name = key.name || key.label;
       if (key.group) btn.dataset.group = key.group;
 
-      const color = state.keyColors[key.id] || '#00f0ff';
-      btn.style.boxShadow = `inset 0 -3px 0 ${color}, 0 0 8px ${color}33`;
+      applyKeyVisualStyle(btn, state.keyColors[key.id] || '#00f0ff');
 
       btn.addEventListener('mousedown', (e) => {
         state.isDraggingSelect = true;
+        state.selectedHwLights.clear();
         if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
         toggleTargetSelection(key.id);
       });
 
       btn.addEventListener('mouseenter', () => {
         if (state.isDraggingSelect) {
-          state.selectedTargets.add(String(key.id));
+          state.selectedTargets.add(key.id);
           refreshSelectionUI();
         }
       });
@@ -133,14 +351,6 @@ function buildKeyboard() {
   });
 }
 
-const NUMPAD_KEYS = [
-  { id: 69, label: 'NUM' }, { id: 181, label: '/' }, { id: 55, label: '*' }, { id: 74, label: '-' },
-  { id: 71, label: '7' }, { id: 172, label: '8' }, { id: 73, label: '9' }, { id: 78, label: '+', cls: 'num-tall' },
-  { id: 175, label: '4' }, { id: 76, label: '5' }, { id: 177, label: '6' },
-  { id: 79, label: '1' }, { id: 180, label: '2' }, { id: 81, label: '3' }, { id: 184, label: 'ENT', cls: 'num-tall' },
-  { id: 82, label: '0', cls: 'num-wide' }, { id: 183, label: '.' }
-];
-
 function buildNumpad() {
   const container = document.getElementById('kbd-numpad');
   if (!container) return;
@@ -151,11 +361,10 @@ function buildNumpad() {
     btn.className = `keycap ${key.cls || ''}`;
     btn.textContent = key.label;
     btn.dataset.id = key.id;
-    btn.dataset.name = `Num ${key.label}`;
-    btn.dataset.group = 'numpad';
+    btn.dataset.name = key.name || `Num ${key.label}`;
+    btn.dataset.group = key.group || 'numpad';
 
-    const color = state.keyColors[key.id] || '#00f0ff';
-    btn.style.boxShadow = `inset 0 -3px 0 ${color}, 0 0 8px ${color}33`;
+    applyKeyVisualStyle(btn, state.keyColors[key.id] || '#00f0ff');
 
     btn.addEventListener('mousedown', (e) => {
       state.isDraggingSelect = true;
@@ -166,7 +375,7 @@ function buildNumpad() {
 
     btn.addEventListener('mouseenter', () => {
       if (state.isDraggingSelect) {
-        state.selectedTargets.add(String(key.id));
+        state.selectedTargets.add(key.id);
         refreshSelectionUI();
       }
     });
@@ -180,6 +389,15 @@ function toggleTargetSelection(id) {
   if (state.selectedTargets.has(key)) state.selectedTargets.delete(key);
   else state.selectedTargets.add(key);
   refreshSelectionUI();
+}
+
+function formatTargetLabel(t) {
+  if (t === 'touchpad') return 'RGB Touchpad';
+  const kd = KEY_BY_ID.get(t);
+  if (kd) return kd.name || kd.label;
+  const zEl = document.querySelector(`.mouse-zone[data-zone-id="${t}"], .chassis-zone[data-zone-id="${t}"]`);
+  if (zEl && zEl.dataset.zoneName) return zEl.dataset.zoneName;
+  return t;
 }
 
 function refreshSelectionUI() {
@@ -201,7 +419,8 @@ function refreshSelectionUI() {
   } else if (state.selectedHwLights.size > 0) {
     preview.textContent = `Hardware LEDs: ${Array.from(state.selectedHwLights).slice(0, 8).map((id) => `#${id}`).join(', ')}${state.selectedHwLights.size > 8 ? '…' : ''}`;
   } else {
-    preview.textContent = `Targets: ${Array.from(state.selectedTargets).slice(0, 8).join(', ')}${count > 8 ? '…' : ''}`;
+    const names = Array.from(state.selectedTargets).slice(0, 8).map(formatTargetLabel);
+    preview.textContent = `Targets: ${names.join(', ')}${count > 8 ? '…' : ''}`;
   }
 }
 
@@ -225,7 +444,27 @@ function initNavigation() {
       document.getElementById(`view-${state.activeView}`).classList.add('active');
       document.getElementById('kbd-quick-bar').style.display = state.activeView === 'keyboard' ? 'flex' : 'none';
       state.selectedTargets.clear();
+      state.selectedHwLights.clear();
+
+      const viewDev = getTargetDeviceForView(state.activeView);
+      if (viewDev) {
+        state.selectedDevicePid = viewDev.pid;
+        const dd = document.getElementById('hw-device-dropdown');
+        if (dd) dd.value = String(viewDev.pid);
+        renderHardwareLights();
+      }
+      if (state.activeView === 'mouse') {
+        document.getElementById('mouse-zone-label').textContent = viewDev
+          ? `Targeting ${viewDev.name} — Click any mouse RGB zone`
+          : 'No compatible AlienFX gaming mouse detected';
+      } else if (state.activeView === 'chassis') {
+        document.getElementById('chassis-zone-label').textContent = viewDev
+          ? `Targeting ${viewDev.name} — Click any chassis zone`
+          : 'No chassis RGB controller detected';
+      }
+
       refreshSelectionUI();
+      syncVirtualLightingFromState();
     });
   });
 
@@ -236,15 +475,15 @@ function initNavigation() {
       state.selectedHwLights.clear();
       state.selectedTargets.clear();
       if (mode === 'touchpad') {
-        state.selectedTargets.add('20');
+        state.selectedTargets.add('touchpad');
       } else if (mode !== 'clear') {
         document.querySelectorAll('.keycap').forEach((k) => {
           if (mode === 'all' || k.dataset.group === mode) {
             state.selectedTargets.add(k.dataset.id);
           }
         });
-        if (mode === 'all') {
-          state.selectedTargets.add('20');
+        if (mode === 'all' && findTouchpadLights().length > 0) {
+          state.selectedTargets.add('touchpad');
         }
       }
       refreshSelectionUI();
@@ -328,22 +567,41 @@ function initLightingControls() {
   });
 
   document.getElementById('btn-apply-lighting').addEventListener('click', () => {
-    const uiTargets = Array.from(state.selectedTargets).map((x) => parseInt(x, 10));
     const hwTargets = Array.from(state.selectedHwLights);
+    const uiTargets = Array.from(state.selectedTargets);
     if (uiTargets.length === 0 && hwTargets.length === 0) return;
 
-    // Update UI visual preview immediately
+    const commonPayload = {
+      color: state.colorPrimary,
+      color2: state.colorSecondary,
+      color3: state.auroraColors[2] || state.colorPrimary,
+      effect: state.effect,
+      speed: state.speed
+    };
+
+    // Direct Hardware LED Mapper selection always goes to currently chosen dropdown device
+    if (hwTargets.length > 0) {
+      const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
+      if (!dev) return;
+      sendCommand({
+        cmd: 'applyZoneColor',
+        pid: dev.pid,
+        lightIds: hwTargets,
+        zoneName: `LEDs ${hwTargets.slice(0, 4).map((x) => `#${x}`).join(',')}`,
+        ...commonPayload
+      });
+      return;
+    }
+
+    // Update UI visual preview ONLY for selected targets
     uiTargets.forEach((id) => {
       state.keyColors[id] = state.colorPrimary;
       const keyEl = document.querySelector(`.keycap[data-id="${id}"]`);
-      if (keyEl) {
-        keyEl.style.boxShadow = `inset 0 -3px 0 ${state.colorPrimary}, 0 0 12px ${state.colorPrimary}55`;
-      }
+      if (keyEl) applyKeyVisualStyle(keyEl, state.colorPrimary);
+
       const tpEl = document.querySelector(`.touchpad-zone[data-zone-id="${id}"]`);
-      if (tpEl) {
-        tpEl.style.borderColor = state.colorPrimary;
-        tpEl.style.boxShadow = `0 0 18px ${state.colorPrimary}55, inset 0 0 18px ${state.colorPrimary}33`;
-      }
+      if (tpEl) applyTouchpadVisualStyle(tpEl, state.colorPrimary);
+
       const zoneEl = document.querySelector(`.mouse-zone[data-zone-id="${id}"], .chassis-zone[data-zone-id="${id}"]`);
       if (zoneEl) {
         if (zoneEl.tagName.toLowerCase() === 'path') zoneEl.style.stroke = state.colorPrimary;
@@ -351,50 +609,91 @@ function initLightingControls() {
       }
     });
 
-    const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
-    let resolvedIds = hwTargets;
+    if (state.activeView === 'keyboard') {
+      const hasTouchpad = uiTargets.includes('touchpad');
+      const keyTargets = uiTargets.filter((id) => id !== 'touchpad');
 
-    if (resolvedIds.length === 0) {
-      if (dev && dev.lights && dev.lights.length > 0) {
-        const nonIndicatorLights = dev.lights.filter((l) => !(l.flags & 3));
-        const usableLights = nonIndicatorLights.length > 0 ? nonIndicatorLights : dev.lights;
-
-        if (state.activeView === 'keyboard') {
-          const matched = [];
-          uiTargets.forEach((sc) => {
-            const found = dev.lights.find((l) => l.scancode === sc);
-            if (found) matched.push(found.id);
+      if (hasTouchpad) {
+        const tpLights = findTouchpadLights();
+        if (tpLights.length > 0) {
+          const byPid = new Map();
+          tpLights.forEach((t) => {
+            if (!byPid.has(t.pid)) byPid.set(t.pid, []);
+            byPid.get(t.pid).push(t.lid);
           });
-          if (matched.length > 0) {
-            resolvedIds = Array.from(new Set(matched));
-          } else {
-            // Zone-based keyboard without per-key scancodes: apply to usable hardware zones
-            resolvedIds = usableLights.map((l) => l.id);
-          }
-        } else {
-          const matched = [];
-          uiTargets.forEach((zid) => {
-            const exact = dev.lights.find((l) => l.id === zid);
-            if (exact) matched.push(exact.id);
-            else if (usableLights.length > 0) matched.push(usableLights[zid % usableLights.length].id);
+          byPid.forEach((lids, pid) => {
+            sendCommand({
+              cmd: 'applyZoneColor',
+              pid,
+              lightIds: Array.from(new Set(lids)),
+              zoneName: 'RGB Touchpad',
+              ...commonPayload
+            });
           });
-          resolvedIds = Array.from(new Set(matched));
+        } else if (keyTargets.length === 0) {
+          document.getElementById('selected-names').textContent = 'No dedicated RGB Touchpad LED exposed by hardware';
+          return;
         }
-      } else {
-        resolvedIds = uiTargets;
       }
+
+      if (keyTargets.length === 0) return;
+
+      const kbdDev = getTargetDeviceForView('keyboard');
+      if (!kbdDev || !kbdDev.lights || kbdDev.lights.length === 0) return;
+
+      const matched = [];
+      keyTargets.forEach((id) => {
+        const keyDef = KEY_BY_ID.get(id);
+        if (keyDef) {
+          matched.push(...findLightsForKey(keyDef, kbdDev));
+        }
+      });
+
+      let resolvedIds = Array.from(new Set(matched));
+      if (resolvedIds.length === 0 && !isPerKeyKeyboard(kbdDev)) {
+        const nonInd = kbdDev.lights.filter((l) => !(l.flags & 3));
+        resolvedIds = (nonInd.length > 0 ? nonInd : kbdDev.lights).map((l) => l.id);
+      }
+
+      if (resolvedIds.length === 0) {
+        document.getElementById('selected-names').textContent = 'No matching physical key LEDs found';
+        return;
+      }
+
+      const labelPreview = keyTargets.slice(0, 4).map((id) => KEY_BY_ID.get(id)?.label || id).join(', ');
+      sendCommand({
+        cmd: 'applyZoneColor',
+        pid: kbdDev.pid,
+        lightIds: resolvedIds,
+        zoneName: keyTargets.length > 4 ? `Keys (${keyTargets.length})` : `Keys ${labelPreview}`,
+        ...commonPayload
+      });
+      return;
     }
+
+    // Mouse or Chassis views
+    const viewDev = getTargetDeviceForView(state.activeView);
+    if (!viewDev || !viewDev.lights || viewDev.lights.length === 0) {
+      const labelEl = document.getElementById(state.activeView === 'mouse' ? 'mouse-zone-label' : 'chassis-zone-label');
+      if (labelEl) labelEl.textContent = `No compatible ${state.activeView} device detected`;
+      return;
+    }
+
+    const matched = [];
+    uiTargets.forEach((zid) => {
+      const zEl = document.querySelector(`.${state.activeView}-zone[data-zone-id="${zid}"]`);
+      const zName = zEl ? zEl.dataset.zoneName : '';
+      matched.push(...findLightsForZone(zid, zName, viewDev));
+    });
+    const resolvedIds = Array.from(new Set(matched));
+    if (resolvedIds.length === 0) return;
 
     sendCommand({
       cmd: 'applyZoneColor',
-      pid: dev ? dev.pid : state.selectedDevicePid,
+      pid: viewDev.pid,
       lightIds: resolvedIds,
-      color: state.colorPrimary,
-      color2: state.colorSecondary,
-      color3: state.auroraColors[2] || state.colorPrimary,
-      effect: state.effect,
-      speed: state.speed,
-      zoneName: `${state.activeView.toUpperCase()} Zone`
+      zoneName: `${state.activeView.toUpperCase()} Zone`,
+      ...commonPayload
     });
   });
 
@@ -431,7 +730,6 @@ function renderFanCurve() {
   const w = 640, h = 240, pad = 34;
   svg.innerHTML = '';
 
-  // Grid lines
   for (let i = 0; i <= 4; i++) {
     const y = pad + ((h - 2 * pad) * i) / 4;
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -555,11 +853,11 @@ function applyTelemetry(data) {
 
 function setAllVirtualColor(col) {
   document.querySelectorAll('.keycap[data-id]').forEach((k) => {
-    k.style.boxShadow = `inset 0 -3px 0 ${col}, 0 0 10px ${col}44`;
+    state.keyColors[k.dataset.id] = col;
+    applyKeyVisualStyle(k, col);
   });
   document.querySelectorAll('.touchpad-zone').forEach((tp) => {
-    tp.style.borderColor = col;
-    tp.style.boxShadow = `0 0 18px ${col}55, inset 0 0 18px ${col}33`;
+    applyTouchpadVisualStyle(tp, col);
   });
   document.querySelectorAll('.mouse-zone, .chassis-zone').forEach((z) => {
     if (z.tagName.toLowerCase() === 'path') z.style.stroke = col;
@@ -571,40 +869,93 @@ function syncVirtualLightingFromState() {
   const activeProf = state.profiles.find((p) => p.active) || state.profiles[0];
   if (!activeProf || !activeProf.lightsets || activeProf.lightsets.length === 0) return;
 
-  const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
-  let appliedPerKey = false;
-
+  // Build exact (pid, lid) -> color lookup from active profile lightsets
+  const litColorMap = new Map();
+  const deviceFallbackColor = new Map();
   activeProf.lightsets.forEach((ls) => {
     const col = ls.color || '#00f0ff';
-    if (!ls.lights || ls.lights.length === 0) return;
-
-    ls.lights.forEach((gl) => {
-      if (dev && gl.did !== dev.pid) return;
-      const hwLight = dev && dev.lights ? dev.lights.find((l) => l.id === gl.lid) : null;
-      if (hwLight && hwLight.scancode > 0) {
-        const keyEl = document.querySelector(`.keycap[data-id="${hwLight.scancode}"]`);
-        if (keyEl) {
-          keyEl.style.boxShadow = `inset 0 -3px 0 ${col}, 0 0 12px ${col}55`;
-          appliedPerKey = true;
-        }
-      }
-      const tpEl = document.querySelector(`.touchpad-zone[data-zone-id="${gl.lid}"]`);
-      if (tpEl) {
-        tpEl.style.borderColor = col;
-        tpEl.style.boxShadow = `0 0 18px ${col}55, inset 0 0 18px ${col}33`;
-      }
-      const zoneEl = document.querySelector(`.mouse-zone[data-zone-id="${gl.lid}"], .chassis-zone[data-zone-id="${gl.lid}"]`);
-      if (zoneEl) {
-        if (zoneEl.tagName.toLowerCase() === 'path') zoneEl.style.stroke = col;
-        else zoneEl.style.fill = col;
-      }
+    (ls.lights || []).forEach((gl) => {
+      litColorMap.set(`${gl.did}:${gl.lid}`, col);
+      if (!deviceFallbackColor.has(gl.did)) deviceFallbackColor.set(gl.did, col);
     });
   });
 
-  if (!appliedPerKey && activeProf.lightsets.length > 0) {
-    const primaryCol = activeProf.lightsets[0].color;
-    if (primaryCol) setAllVirtualColor(primaryCol);
+  // 1. Sync Keyboard & Numpad keys accurately against keyboard device
+  const kbdDev = getTargetDeviceForView('keyboard');
+  const kbdPerKey = isPerKeyKeyboard(kbdDev);
+  const kbdFallback = kbdDev ? deviceFallbackColor.get(kbdDev.pid) : null;
+
+  document.querySelectorAll('.keycap[data-id]').forEach((keyEl) => {
+    const keyDef = KEY_BY_ID.get(keyEl.dataset.id);
+    let col = null;
+    if (keyDef && kbdDev) {
+      const lids = findLightsForKey(keyDef, kbdDev);
+      for (const lid of lids) {
+        const hit = litColorMap.get(`${kbdDev.pid}:${lid}`);
+        if (hit) {
+          col = hit;
+          break;
+        }
+      }
+      if (!col && !kbdPerKey && kbdFallback) {
+        col = kbdFallback;
+      }
+    }
+    if (col) {
+      state.keyColors[keyEl.dataset.id] = col;
+      applyKeyVisualStyle(keyEl, col);
+    } else {
+      delete state.keyColors[keyEl.dataset.id];
+      applyKeyVisualStyle(keyEl, null);
+    }
+  });
+
+  // 2. Sync RGB Touchpad
+  const tpEl = document.getElementById('rgb-touchpad');
+  if (tpEl) {
+    let tpCol = null;
+    findTouchpadLights().forEach((t) => {
+      const hit = litColorMap.get(`${t.pid}:${t.lid}`);
+      if (hit && !tpCol) tpCol = hit;
+    });
+    applyTouchpadVisualStyle(tpEl, tpCol);
   }
+
+  // 3. Sync Mouse zones
+  const mouseDev = getTargetDeviceForView('mouse');
+  document.querySelectorAll('.mouse-zone').forEach((zoneEl) => {
+    let col = null;
+    if (mouseDev) {
+      const lids = findLightsForZone(zoneEl.dataset.zoneId, zoneEl.dataset.zoneName, mouseDev);
+      for (const lid of lids) {
+        const hit = litColorMap.get(`${mouseDev.pid}:${lid}`);
+        if (hit) { col = hit; break; }
+      }
+      if (!col) col = deviceFallbackColor.get(mouseDev.pid) || null;
+    }
+    if (col) {
+      if (zoneEl.tagName.toLowerCase() === 'path') zoneEl.style.stroke = col;
+      else zoneEl.style.fill = col;
+    }
+  });
+
+  // 4. Sync Chassis zones
+  const chassisDev = getTargetDeviceForView('chassis');
+  document.querySelectorAll('.chassis-zone').forEach((zoneEl) => {
+    let col = null;
+    if (chassisDev) {
+      const lids = findLightsForZone(zoneEl.dataset.zoneId, zoneEl.dataset.zoneName, chassisDev);
+      for (const lid of lids) {
+        const hit = litColorMap.get(`${chassisDev.pid}:${lid}`);
+        if (hit) { col = hit; break; }
+      }
+      if (!col) col = deviceFallbackColor.get(chassisDev.pid) || null;
+    }
+    if (col) {
+      if (zoneEl.tagName.toLowerCase() === 'path') zoneEl.style.stroke = col;
+      else zoneEl.style.fill = col;
+    }
+  });
 }
 
 function applyFullState(data) {
@@ -625,11 +976,11 @@ function applyFullState(data) {
     document.getElementById('set-dim-battery').checked = !!data.settings.dimmedBatt;
   }
 
-  // Update device dropdown (preserving currently selected device)
   const dd = document.getElementById('hw-device-dropdown');
   const hasSelected = state.devices.some((d) => d.pid === state.selectedDevicePid);
   if (!hasSelected) {
-    state.selectedDevicePid = state.devices.length > 0 ? state.devices[0].pid : 0;
+    const viewDev = getTargetDeviceForView(state.activeView);
+    state.selectedDevicePid = viewDev ? viewDev.pid : (state.devices.length > 0 ? state.devices[0].pid : 0);
   }
   dd.innerHTML = '';
   state.devices.forEach((d) => {
@@ -644,7 +995,6 @@ function applyFullState(data) {
   renderHardwareLights();
   syncVirtualLightingFromState();
 
-  // Update profiles
   const pGrid = document.getElementById('profiles-grid');
   pGrid.innerHTML = '';
   state.profiles.forEach((p) => {
@@ -673,7 +1023,8 @@ function renderHardwareLights() {
     list.innerHTML = '<div class="hint-text">No AlienFX hardware detected (Preview Mode).</div>';
     return;
   }
-  (dev.lights || []).forEach((l) => {
+  const lights = [...(dev.lights || [])].sort((a, b) => a.id - b.id);
+  lights.forEach((l) => {
     const row = document.createElement('div');
     row.className = `hw-light-item ${state.selectedHwLights.has(l.id) ? 'selected' : ''}`;
     row.dataset.lid = l.id;
@@ -681,6 +1032,7 @@ function renderHardwareLights() {
     row.innerHTML = `<span>#${l.id} ${l.name || 'Unnamed LED'}</span><button class="hw-blink-btn">Blink</button>`;
     row.addEventListener('click', (e) => {
       if (e.target.closest('.hw-blink-btn')) return;
+      state.selectedTargets.clear();
       if (!e.ctrlKey && !e.shiftKey) state.selectedHwLights.clear();
       if (state.selectedHwLights.has(l.id)) state.selectedHwLights.delete(l.id);
       else state.selectedHwLights.add(l.id);
@@ -733,6 +1085,7 @@ function initMiscActions() {
     btnSelectHwAll.addEventListener('click', () => {
       const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
       if (!dev || !dev.lights) return;
+      state.selectedTargets.clear();
       state.selectedHwLights.clear();
       dev.lights.forEach((l) => state.selectedHwLights.add(l.id));
       refreshSelectionUI();
@@ -832,7 +1185,8 @@ function initMiscActions() {
 
       state.devices.forEach((dev) => {
         if (!dev.lights || dev.lights.length === 0) return;
-        const nonInd = dev.lights.filter((l) => !(l.flags & 3));
+        const mask = isPerKeyKeyboard(dev) ? 1 : 3;
+        const nonInd = dev.lights.filter((l) => !(l.flags & mask));
         const ids = (nonInd.length > 0 ? nonInd : dev.lights).map((l) => l.id);
         sendCommand({
           cmd: 'applyZoneColor',
@@ -887,7 +1241,6 @@ document.addEventListener('DOMContentLoaded', () => {
     sendCommand({ cmd: 'getState' });
     sendCommand({ cmd: 'getTelemetry' });
   } else {
-    // Demo data for browser preview
     applyFullState({
       devices: [{ pid: 0x550, name: 'Alienware Integrated Keyboard (Preview)', lights: [{ id: 1, name: 'WASD Cluster' }, { id: 2, name: 'Logo Emblem' }] }],
       profiles: [{ id: 0, name: 'Default', isDefault: true, active: true }, { id: 1, name: 'Orbital Gaming', isDefault: false, active: false }],

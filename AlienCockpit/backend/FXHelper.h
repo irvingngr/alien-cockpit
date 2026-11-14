@@ -29,6 +29,7 @@ struct LightQueryData {
 
 class FXHelper
 {
+	friend class CockpitBridge;
 private:
 
 	bool blinkStage = false, wasLFX = false;
