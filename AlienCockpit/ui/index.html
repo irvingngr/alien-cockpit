@@ -123,13 +123,23 @@
                 <button class="qs-btn" data-select="wasd">WASD</button>
                 <button class="qs-btn" data-select="arrows">Arrows</button>
                 <button class="qs-btn" data-select="fn">F-Keys</button>
+                <button class="qs-btn" data-select="numpad">Numpad</button>
+                <button class="qs-btn" data-select="touchpad">Touchpad</button>
                 <button class="qs-btn" data-select="mods">Modifiers</button>
-                <button class="qs-btn" data-select="clear">Clear Selection</button>
+                <button class="qs-btn" data-select="clear">Clear</button>
               </div>
 
-              <!-- Keyboard Interactive Map -->
+              <!-- Full Keyboard + Numpad + RGB Touchpad Interactive Map -->
               <div class="device-canvas active" id="view-keyboard">
-                <div class="kbd-frame" id="kbd-grid"></div>
+                <div class="laptop-deck">
+                  <div class="kbd-deck-row">
+                    <div class="kbd-frame" id="kbd-grid"></div>
+                    <div class="kbd-numpad" id="kbd-numpad"></div>
+                  </div>
+                  <div class="touchpad-zone" id="rgb-touchpad" data-zone-id="20" data-zone-name="RGB Touchpad" title="Click to select RGB Touchpad">
+                    <span>RGB TOUCHPAD</span>
+                  </div>
+                </div>
               </div>
 
               <!-- Mouse Interactive SVG Map -->
@@ -244,11 +254,23 @@
                   <button class="eff-btn" data-eff="morph">Morph</button>
                   <button class="eff-btn" data-eff="spectrum">Spectrum</button>
                   <button class="eff-btn" data-eff="wave">Wave</button>
+                  <button class="eff-btn eff-aurora" data-eff="aurora">✦ Aurora (2025)</button>
                 </div>
 
                 <div class="secondary-color-row" id="secondary-color-wrap" style="display:none;">
                   <span class="sec-sub">Secondary Color</span>
                   <input type="color" id="color-secondary" value="#7b2cbf" />
+                </div>
+
+                <div class="aurora-palettes" id="aurora-palette-wrap" style="display:none;">
+                  <span class="sec-sub">Aurora Palette</span>
+                  <div class="palette-row">
+                    <button class="palette-btn active" data-colors="#00f0ff,#00ff9d,#7b2cbf" title="Borealis" style="background:linear-gradient(90deg,#00f0ff,#00ff9d,#7b2cbf)"></button>
+                    <button class="palette-btn" data-colors="#fcee0a,#00f0ff,#ff007f" title="Cyberpunk" style="background:linear-gradient(90deg,#fcee0a,#00f0ff,#ff007f)"></button>
+                    <button class="palette-btn" data-colors="#ff2a4b,#ffb703,#7b2cbf" title="Solar Flare" style="background:linear-gradient(90deg,#ff2a4b,#ffb703,#7b2cbf)"></button>
+                    <button class="palette-btn" data-colors="#3a86ff,#00f0ff,#ffffff" title="Deep Space" style="background:linear-gradient(90deg,#3a86ff,#00f0ff,#ffffff)"></button>
+                    <button class="palette-btn" data-colors="#00ff9d,#ffb703,#00f0ff" title="Emerald" style="background:linear-gradient(90deg,#00ff9d,#ffb703,#00f0ff)"></button>
+                  </div>
                 </div>
 
                 <div class="speed-row">
@@ -268,6 +290,10 @@
                 <p class="hint-text">Detected AlienFX devices &amp; LEDs. Click Blink to locate a physical LED.</p>
                 <div class="hw-device-select">
                   <select id="hw-device-dropdown"></select>
+                </div>
+                <div class="hw-add-row">
+                  <input type="number" id="hw-add-led-id" min="0" max="255" placeholder="Probe LED ID (0-255)" />
+                  <button class="qs-btn" id="btn-add-hw-led">+ Add LED</button>
                 </div>
                 <div class="hw-light-list" id="hw-light-list"></div>
               </div>
@@ -303,9 +329,17 @@
 
           <div class="card curve-card">
             <div class="curve-header">
-              <h3>Interactive Fan Curve</h3>
-              <span class="hint-text">Drag control points to adjust Fan Boost % vs Temperature (°C)</span>
-              <button class="btn-secondary" id="btn-save-curve">Save Curve</button>
+              <div>
+                <h3>Interactive Fan Curve</h3>
+                <span class="hint-text">Drag control points or pick a preset, then click Save Curve</span>
+              </div>
+              <div class="thermal-presets">
+                <button class="qs-btn" data-tpreset="quiet">Silent</button>
+                <button class="qs-btn" data-tpreset="balanced">Balanced</button>
+                <button class="qs-btn" data-tpreset="gaming">Gaming</button>
+                <button class="qs-btn" data-tpreset="max">Max Cooling</button>
+                <button class="btn-secondary" id="btn-save-curve">Save Curve</button>
+              </div>
             </div>
             <svg id="fan-curve-svg" viewBox="0 0 640 240" class="fan-curve-svg"></svg>
           </div>
@@ -334,6 +368,17 @@
             <div class="profile-create-row">
               <input type="text" id="new-profile-name" placeholder="New profile name..." />
               <button class="btn-primary" id="btn-create-profile">+ Create Profile</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Game &amp; Theme Presets (1-Click Apply)</h3>
+            <div class="preset-cards" id="game-presets">
+              <button class="preset-chip" data-preset="cyberpunk" style="--p1:#fcee0a;--p2:#00f0ff">Cyberpunk 2077</button>
+              <button class="preset-chip" data-preset="aurora" style="--p1:#00f0ff;--p2:#00ff9d">Aurora Borealis</button>
+              <button class="preset-chip" data-preset="area51" style="--p1:#00f0ff;--p2:#7b2cbf">Area-51 Orbital</button>
+              <button class="preset-chip" data-preset="stealth" style="--p1:#ff2a4b;--p2:#7b2cbf">Crimson Stealth</button>
+              <button class="preset-chip" data-preset="spectrum" style="--p1:#ff007f;--p2:#3a86ff">Rainbow Spectrum</button>
             </div>
           </div>
 

@@ -53,21 +53,64 @@ static std::string EffectTypeToName(byte t) {
     }
 }
 
+static int GetLiveCpuPercent() {
+    static ULONGLONG prevIdle = 0, prevKernel = 0, prevUser = 0;
+    static int lastPct = 0;
+    FILETIME ftIdle{}, ftKernel{}, ftUser{};
+    if (!GetSystemTimes(&ftIdle, &ftKernel, &ftUser)) return lastPct;
+    auto toU64 = [](const FILETIME& ft) -> ULONGLONG {
+        return (static_cast<ULONGLONG>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    };
+    ULONGLONG idle = toU64(ftIdle), kernel = toU64(ftKernel), user = toU64(ftUser);
+    if (prevKernel != 0 || prevUser != 0) {
+        ULONGLONG dIdle = idle - prevIdle;
+        ULONGLONG dTotal = (kernel - prevKernel) + (user - prevUser);
+        if (dTotal > 0 && dTotal >= dIdle) {
+            lastPct = static_cast<int>(((dTotal - dIdle) * 100) / dTotal);
+            if (lastPct < 0) lastPct = 0;
+            if (lastPct > 100) lastPct = 100;
+        }
+    }
+    prevIdle = idle; prevKernel = kernel; prevUser = user;
+    return lastPct;
+}
+
 std::string CockpitBridge::BuildTelemetryJson() {
     SimpleJson::Value root = SimpleJson::Value::Object();
     root["type"] = "telemetry";
 
-    SimpleJson::Value sys = SimpleJson::Value::Object();
-    if (fxhl) {
-        sys["cpu"] = static_cast<int>(fxhl->eData.CPU);
-        sys["ram"] = static_cast<int>(fxhl->eData.RAM);
-        sys["gpu"] = static_cast<int>(fxhl->eData.GPU);
-        sys["hdd"] = static_cast<int>(fxhl->eData.HDD);
-        sys["net"] = static_cast<int>(fxhl->eData.NET);
-        sys["temp"] = static_cast<int>(fxhl->eData.Temp);
-        sys["batt"] = static_cast<int>(fxhl->eData.Batt);
-        sys["ac"] = (fxhl->eData.ACP == 1);
+    int cpuPct = GetLiveCpuPercent();
+    int sysBatt = -1;
+    bool acOnline = true;
+    SYSTEM_POWER_STATUS sps{};
+    if (GetSystemPowerStatus(&sps)) {
+        if (sps.BatteryFlag != 128 && sps.BatteryLifePercent <= 100) {
+            sysBatt = static_cast<int>(sps.BatteryLifePercent);
+        }
+        acOnline = (sps.ACLineStatus == 1);
     }
+
+    int liveTemp = 0;
+    if (mon && !mon->senValues.empty()) {
+        for (const auto& kv : mon->senValues) {
+            if (kv.second > liveTemp && kv.second < 130) {
+                liveTemp = static_cast<int>(kv.second);
+            }
+        }
+    }
+    if (liveTemp == 0 && fxhl && fxhl->eData.Temp > 0) {
+        liveTemp = static_cast<int>(fxhl->eData.Temp);
+    }
+
+    SimpleJson::Value sys = SimpleJson::Value::Object();
+    sys["cpu"] = cpuPct;
+    sys["ram"] = fxhl ? static_cast<int>(fxhl->eData.RAM) : 0;
+    sys["gpu"] = fxhl ? static_cast<int>(fxhl->eData.GPU) : 0;
+    sys["hdd"] = fxhl ? static_cast<int>(fxhl->eData.HDD) : 0;
+    sys["net"] = fxhl ? static_cast<int>(fxhl->eData.NET) : 0;
+    sys["temp"] = liveTemp;
+    sys["batt"] = sysBatt;
+    sys["ac"] = acOnline;
     root["system"] = sys;
 
     // Batteries
@@ -87,7 +130,7 @@ std::string CockpitBridge::BuildTelemetryJson() {
 
     // Fans & Sensors
     SimpleJson::Value fanData = SimpleJson::Value::Object();
-    fanData["available"] = (mon != nullptr && mon->acpi != nullptr);
+    fanData["available"] = (mon != nullptr && mon->acpi != nullptr && (mon->fansize > 0 || mon->sensorSize > 0 || mon->powerSize > 0));
     if (mon) {
         fanData["powerMode"] = static_cast<int>(mon->powerMode);
         SimpleJson::Value sensors = SimpleJson::Value::Array();
@@ -389,7 +432,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             act1.time = 5;
             targetSet->color.push_back(act1);
 
-            if (eff == "morph" || eff == "breathing" || eff == "pulse") {
+            if (eff == "morph" || eff == "breathing" || eff == "pulse" || eff == "aurora") {
                 AlienFX_SDK::Afx_action act2{};
                 act2.type = act1.type;
                 act2.r = r2; act2.g = g2; act2.b = b2;
@@ -397,9 +440,42 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 act2.time = 5;
                 targetSet->color.push_back(act2);
             }
+            if (eff == "aurora") {
+                std::string hex3 = msg.get("color3").asString("#7b2cbf");
+                byte r3 = 123, g3 = 44, b3 = 191;
+                HexToRgb(hex3, r3, g3, b3);
+                AlienFX_SDK::Afx_action act3{};
+                act3.type = act1.type;
+                act3.r = r3; act3.g = g3; act3.b = b3;
+                act3.tempo = speed;
+                act3.time = 5;
+                targetSet->color.push_back(act3);
+            }
 
             fxhl->ClearAndRefresh(true);
             conf->Save();
+        }
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "addLight" && conf) {
+        WORD pid = static_cast<WORD>(msg.get("pid").asInt(0));
+        byte lid = static_cast<byte>(msg.get("lightId").asInt(0));
+        std::string name = msg.get("name").asString();
+        if (name.empty()) name = "LED Zone " + std::to_string(lid);
+        AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
+        if (dev) {
+            bool exists = false;
+            for (const auto& l : dev->lights) {
+                if (l.lightid == lid) { exists = true; break; }
+            }
+            if (!exists) {
+                AlienFX_SDK::Afx_light nl{};
+                nl.lightid = lid;
+                nl.name = name;
+                dev->lights.push_back(nl);
+                conf->afx_dev.SaveMappings();
+            }
         }
         return BuildFullStateJson();
     }

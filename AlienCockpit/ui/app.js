@@ -13,6 +13,7 @@ const state = {
   effect: 'static',
   colorPrimary: '#00f0ff',
   colorSecondary: '#7b2cbf',
+  auroraColors: ['#00f0ff', '#00ff9d', '#7b2cbf'],
   speed: 50,
   keyColors: {},
   zoneColors: {},
@@ -187,25 +188,33 @@ function initNavigation() {
       const mode = btn.dataset.select;
       state.selectedHwLights.clear();
       state.selectedTargets.clear();
-      if (mode !== 'clear') {
+      if (mode === 'touchpad') {
+        state.selectedTargets.add('20');
+      } else if (mode !== 'clear') {
         document.querySelectorAll('.keycap').forEach((k) => {
           if (mode === 'all' || k.dataset.group === mode) {
             state.selectedTargets.add(k.dataset.id);
           }
         });
+        if (mode === 'all') {
+          state.selectedTargets.add('20');
+        }
       }
       refreshSelectionUI();
     });
   });
 
-  // Mouse & Chassis zones
-  document.querySelectorAll('.mouse-zone, .chassis-zone').forEach((zone) => {
+  // Mouse, Chassis & Touchpad zones
+  document.querySelectorAll('.mouse-zone, .chassis-zone, .touchpad-zone').forEach((zone) => {
     zone.addEventListener('click', (e) => {
       state.selectedHwLights.clear();
       if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
       toggleTargetSelection(zone.dataset.zoneId);
-      const labelId = state.activeView === 'mouse' ? 'mouse-zone-label' : 'chassis-zone-label';
-      document.getElementById(labelId).textContent = `Selected: ${zone.dataset.zoneName}`;
+      if (zone.classList.contains('mouse-zone')) {
+        document.getElementById('mouse-zone-label').textContent = `Selected: ${zone.dataset.zoneName}`;
+      } else if (zone.classList.contains('chassis-zone')) {
+        document.getElementById('chassis-zone-label').textContent = `Selected: ${zone.dataset.zoneName}`;
+      }
     });
   });
 }
@@ -244,8 +253,26 @@ function initLightingControls() {
       document.querySelectorAll('.eff-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       state.effect = btn.dataset.eff;
-      const showSec = ['morph', 'breathing', 'pulse'].includes(state.effect);
+      const showSec = ['morph', 'breathing', 'pulse', 'aurora'].includes(state.effect);
       document.getElementById('secondary-color-wrap').style.display = showSec ? 'flex' : 'none';
+      const auroraWrap = document.getElementById('aurora-palette-wrap');
+      if (auroraWrap) auroraWrap.style.display = state.effect === 'aurora' ? 'flex' : 'none';
+    });
+  });
+
+  document.querySelectorAll('.palette-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.palette-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const cols = (btn.dataset.colors || '').split(',').map((s) => s.trim()).filter(Boolean);
+      if (cols.length >= 2) {
+        state.auroraColors = [cols[0], cols[1], cols[2] || cols[0]];
+        state.colorPrimary = cols[0];
+        state.colorSecondary = cols[1];
+        document.getElementById('color-primary').value = cols[0];
+        document.getElementById('hex-primary').value = cols[0].toUpperCase();
+        document.getElementById('color-secondary').value = cols[1];
+      }
     });
   });
 
@@ -264,6 +291,11 @@ function initLightingControls() {
       const keyEl = document.querySelector(`.keycap[data-id="${id}"]`);
       if (keyEl) {
         keyEl.style.boxShadow = `inset 0 -3px 0 ${state.colorPrimary}, 0 0 12px ${state.colorPrimary}55`;
+      }
+      const tpEl = document.querySelector(`.touchpad-zone[data-zone-id="${id}"]`);
+      if (tpEl) {
+        tpEl.style.borderColor = state.colorPrimary;
+        tpEl.style.boxShadow = `0 0 18px ${state.colorPrimary}55, inset 0 0 18px ${state.colorPrimary}33`;
       }
       const zoneEl = document.querySelector(`.mouse-zone[data-zone-id="${id}"], .chassis-zone[data-zone-id="${id}"]`);
       if (zoneEl) {
@@ -312,6 +344,7 @@ function initLightingControls() {
       lightIds: resolvedIds,
       color: state.colorPrimary,
       color2: state.colorSecondary,
+      color3: state.auroraColors[2] || state.colorPrimary,
       effect: state.effect,
       speed: state.speed,
       zoneName: `${state.activeView.toUpperCase()} Zone`
@@ -338,6 +371,10 @@ function updateLightsButton() {
   const btn = document.getElementById('btn-master-lights');
   btn.classList.toggle('active', state.settings.lightsOn);
   btn.innerHTML = `<span class="dot"></span> ${state.settings.lightsOn ? 'LIGHTS ON' : 'LIGHTS OFF'}`;
+  const canvas = document.querySelector('.device-canvas-area');
+  if (canvas) {
+    canvas.style.opacity = state.settings.lightsOn ? '1' : '0.45';
+  }
 }
 
 function renderFanCurve() {
@@ -397,9 +434,9 @@ function renderFanCurve() {
 
 function applyTelemetry(data) {
   if (data.system) {
-    document.getElementById('hud-cpu').textContent = `${data.system.cpu || 0}%`;
-    document.getElementById('hud-temp').textContent = `${data.system.temp || '--'}°C`;
-    document.getElementById('hud-batt').textContent = `${data.system.batt || '--'}%`;
+    document.getElementById('hud-cpu').textContent = `${data.system.cpu ?? 0}%`;
+    document.getElementById('hud-temp').textContent = `${data.system.temp > 0 ? data.system.temp : '--'}°C`;
+    document.getElementById('hud-batt').textContent = `${data.system.batt >= 0 ? data.system.batt : '--'}%`;
   }
 
   if (data.batteries) {
@@ -428,23 +465,93 @@ function applyTelemetry(data) {
   }
 
   if (data.thermals) {
+    if (typeof data.thermals.powerMode === 'number') {
+      document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
+        b.classList.toggle('active', parseInt(b.dataset.pm, 10) === data.thermals.powerMode);
+      });
+    }
+
     const sList = document.getElementById('sensor-list');
     sList.innerHTML = '';
-    (data.thermals.sensors || []).forEach((s) => {
-      const row = document.createElement('div');
-      row.className = 'telemetry-row';
-      row.innerHTML = `<span>${s.name}</span><span class="telemetry-val">${s.temp}°C</span>`;
-      sList.appendChild(row);
-    });
+    const sensors = data.thermals.sensors || [];
+    if (sensors.length === 0) {
+      sList.innerHTML = '<div class="hint-text">No ACPI thermal sensors detected (try running as Administrator).</div>';
+    } else {
+      sensors.forEach((s) => {
+        const row = document.createElement('div');
+        row.className = 'telemetry-row';
+        row.innerHTML = `<span>${s.name}</span><span class="telemetry-val">${s.temp}°C</span>`;
+        sList.appendChild(row);
+      });
+    }
 
     const fList = document.getElementById('fan-list');
     fList.innerHTML = '';
-    (data.thermals.fans || []).forEach((f) => {
-      const row = document.createElement('div');
-      row.className = 'telemetry-row';
-      row.innerHTML = `<span>Fan #${f.id + 1}</span><span class="telemetry-val">${f.rpm} RPM (${f.percent}%)</span>`;
-      fList.appendChild(row);
+    const fans = data.thermals.fans || [];
+    if (fans.length === 0) {
+      fList.innerHTML = '<div class="hint-text">No ACPI cooling fans detected.</div>';
+    } else {
+      fans.forEach((f) => {
+        const row = document.createElement('div');
+        row.className = 'telemetry-row';
+        row.innerHTML = `<span>Fan #${f.id + 1}</span><span class="telemetry-val">${f.rpm} RPM (${f.percent}%)</span>`;
+        fList.appendChild(row);
+      });
+    }
+  }
+}
+
+function setAllVirtualColor(col) {
+  document.querySelectorAll('.keycap[data-id]').forEach((k) => {
+    k.style.boxShadow = `inset 0 -3px 0 ${col}, 0 0 10px ${col}44`;
+  });
+  document.querySelectorAll('.touchpad-zone').forEach((tp) => {
+    tp.style.borderColor = col;
+    tp.style.boxShadow = `0 0 18px ${col}55, inset 0 0 18px ${col}33`;
+  });
+  document.querySelectorAll('.mouse-zone, .chassis-zone').forEach((z) => {
+    if (z.tagName.toLowerCase() === 'path') z.style.stroke = col;
+    else z.style.fill = col;
+  });
+}
+
+function syncVirtualLightingFromState() {
+  const activeProf = state.profiles.find((p) => p.active) || state.profiles[0];
+  if (!activeProf || !activeProf.lightsets || activeProf.lightsets.length === 0) return;
+
+  const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
+  let appliedPerKey = false;
+
+  activeProf.lightsets.forEach((ls) => {
+    const col = ls.color || '#00f0ff';
+    if (!ls.lights || ls.lights.length === 0) return;
+
+    ls.lights.forEach((gl) => {
+      if (dev && gl.did !== dev.pid) return;
+      const hwLight = dev && dev.lights ? dev.lights.find((l) => l.id === gl.lid) : null;
+      if (hwLight && hwLight.scancode > 0) {
+        const keyEl = document.querySelector(`.keycap[data-id="${hwLight.scancode}"]`);
+        if (keyEl) {
+          keyEl.style.boxShadow = `inset 0 -3px 0 ${col}, 0 0 12px ${col}55`;
+          appliedPerKey = true;
+        }
+      }
+      const tpEl = document.querySelector(`.touchpad-zone[data-zone-id="${gl.lid}"]`);
+      if (tpEl) {
+        tpEl.style.borderColor = col;
+        tpEl.style.boxShadow = `0 0 18px ${col}55, inset 0 0 18px ${col}33`;
+      }
+      const zoneEl = document.querySelector(`.mouse-zone[data-zone-id="${gl.lid}"], .chassis-zone[data-zone-id="${gl.lid}"]`);
+      if (zoneEl) {
+        if (zoneEl.tagName.toLowerCase() === 'path') zoneEl.style.stroke = col;
+        else zoneEl.style.fill = col;
+      }
     });
+  });
+
+  if (!appliedPerKey && activeProf.lightsets.length > 0) {
+    const primaryCol = activeProf.lightsets[0].color;
+    if (primaryCol) setAllVirtualColor(primaryCol);
   }
 }
 
@@ -483,6 +590,7 @@ function applyFullState(data) {
     dd.value = String(state.selectedDevicePid);
   }
   renderHardwareLights();
+  syncVirtualLightingFromState();
 
   // Update profiles
   const pGrid = document.getElementById('profiles-grid');
@@ -565,6 +673,7 @@ function initMiscActions() {
     state.selectedHwLights.clear();
     renderHardwareLights();
     refreshSelectionUI();
+    syncVirtualLightingFromState();
   });
 
   const btnSelectHwAll = document.getElementById('btn-select-hw-all');
@@ -575,6 +684,19 @@ function initMiscActions() {
       state.selectedHwLights.clear();
       dev.lights.forEach((l) => state.selectedHwLights.add(l.id));
       refreshSelectionUI();
+    });
+  }
+
+  const btnAddHwLed = document.getElementById('btn-add-hw-led');
+  if (btnAddHwLed) {
+    btnAddHwLed.addEventListener('click', () => {
+      const inp = document.getElementById('hw-add-led-id');
+      const lid = parseInt(inp ? inp.value : '', 10);
+      if (Number.isNaN(lid) || lid < 0 || lid > 255) return;
+      const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
+      if (!dev) return;
+      sendCommand({ cmd: 'addLight', pid: dev.pid, lightId: lid, name: `Custom LED ${lid}` });
+      if (inp) inp.value = '';
     });
   }
 
@@ -591,6 +713,87 @@ function initMiscActions() {
       document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       sendCommand({ cmd: 'setPowerMode', mode: parseInt(btn.dataset.pm, 10) });
+    });
+  });
+
+  const thermalPresets = {
+    quiet: {
+      mode: 0,
+      points: [{ temp: 35, boost: 10 }, { temp: 55, boost: 22 }, { temp: 70, boost: 40 }, { temp: 85, boost: 65 }, { temp: 95, boost: 85 }]
+    },
+    balanced: {
+      mode: 1,
+      points: [{ temp: 35, boost: 20 }, { temp: 50, boost: 40 }, { temp: 65, boost: 65 }, { temp: 80, boost: 88 }, { temp: 92, boost: 100 }]
+    },
+    gaming: {
+      mode: 2,
+      points: [{ temp: 30, boost: 35 }, { temp: 48, boost: 58 }, { temp: 62, boost: 80 }, { temp: 75, boost: 95 }, { temp: 88, boost: 100 }]
+    },
+    max: {
+      mode: 3,
+      points: [{ temp: 25, boost: 80 }, { temp: 45, boost: 90 }, { temp: 60, boost: 100 }, { temp: 75, boost: 100 }, { temp: 90, boost: 100 }]
+    }
+  };
+
+  document.querySelectorAll('[data-tpreset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = thermalPresets[btn.dataset.tpreset];
+      if (!preset) return;
+      state.fanCurve = preset.points.map((p) => ({ ...p }));
+      renderFanCurve();
+      document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
+        b.classList.toggle('active', parseInt(b.dataset.pm, 10) === preset.mode);
+      });
+      sendCommand({ cmd: 'setPowerMode', mode: preset.mode });
+      sendCommand({ cmd: 'setFanCurve', fanId: 0, sensorId: 0, active: true, points: state.fanCurve });
+    });
+  });
+
+  const gamePresets = {
+    cyberpunk: { color: '#fcee0a', color2: '#00f0ff', color3: '#ff007f', effect: 'aurora', speed: 60, name: 'Cyberpunk 2077' },
+    aurora: { color: '#00f0ff', color2: '#00ff9d', color3: '#7b2cbf', effect: 'aurora', speed: 45, name: 'Aurora Borealis' },
+    area51: { color: '#00f0ff', color2: '#7b2cbf', color3: '#3a86ff', effect: 'morph', speed: 50, name: 'Area-51 Orbital' },
+    stealth: { color: '#ff2a4b', color2: '#7b2cbf', color3: '#ff2a4b', effect: 'breathing', speed: 35, name: 'Crimson Stealth' },
+    spectrum: { color: '#ff007f', color2: '#3a86ff', color3: '#00ff9d', effect: 'spectrum', speed: 55, name: 'Rainbow Spectrum' }
+  };
+
+  document.querySelectorAll('#game-presets .preset-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const p = gamePresets[btn.dataset.preset];
+      if (!p) return;
+      state.colorPrimary = p.color;
+      state.colorSecondary = p.color2;
+      state.auroraColors = [p.color, p.color2, p.color3];
+      state.effect = p.effect;
+      state.speed = p.speed;
+      document.getElementById('color-primary').value = p.color;
+      document.getElementById('hex-primary').value = p.color.toUpperCase();
+      document.getElementById('color-secondary').value = p.color2;
+      document.getElementById('effect-speed').value = p.speed;
+      document.querySelectorAll('.eff-btn').forEach((b) => b.classList.toggle('active', b.dataset.eff === p.effect));
+      const auroraWrap = document.getElementById('aurora-palette-wrap');
+      if (auroraWrap) auroraWrap.style.display = p.effect === 'aurora' ? 'flex' : 'none';
+      const showSec = ['morph', 'breathing', 'pulse', 'aurora'].includes(p.effect);
+      document.getElementById('secondary-color-wrap').style.display = showSec ? 'flex' : 'none';
+
+      setAllVirtualColor(p.color);
+
+      state.devices.forEach((dev) => {
+        if (!dev.lights || dev.lights.length === 0) return;
+        const nonInd = dev.lights.filter((l) => !(l.flags & 3));
+        const ids = (nonInd.length > 0 ? nonInd : dev.lights).map((l) => l.id);
+        sendCommand({
+          cmd: 'applyZoneColor',
+          pid: dev.pid,
+          lightIds: ids,
+          color: p.color,
+          color2: p.color2,
+          color3: p.color3,
+          effect: p.effect,
+          speed: p.speed,
+          zoneName: p.name
+        });
+      });
     });
   });
 
@@ -621,6 +824,7 @@ function initMiscActions() {
 
 document.addEventListener('DOMContentLoaded', () => {
   buildKeyboard();
+  buildNumpad();
   initNavigation();
   initLightingControls();
   initWindowControls();

@@ -1071,7 +1071,7 @@ namespace AlienFX_SDK {
 		groups.clear();
 		grids.clear();
 
-		RegCreateKeyEx(HKEY_CURRENT_USER, TEXT("SOFTWARE\\Alienfx_SDK"), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &mainKey, NULL);
+		RegCreateKeyEx(HKEY_CURRENT_USER, TEXT("SOFTWARE\\AlienCockpit\\SDK"), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &mainKey, NULL);
 		unsigned vindex;
 		char kName[255], name[255];
 		DWORD len, lend;
@@ -1132,8 +1132,8 @@ namespace AlienFX_SDK {
 		size_t numGrids = grids.size();
 
 		// Remove all maps!
-		RegDeleteTree(HKEY_CURRENT_USER, TEXT("SOFTWARE\\Alienfx_SDK"));
-		RegCreateKeyEx(HKEY_CURRENT_USER, TEXT("SOFTWARE\\Alienfx_SDK"), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hKeybase, NULL);
+		RegDeleteTree(HKEY_CURRENT_USER, TEXT("SOFTWARE\\AlienCockpit\\SDK"));
+		RegCreateKeyEx(HKEY_CURRENT_USER, TEXT("SOFTWARE\\AlienCockpit\\SDK"), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, NULL, &hKeybase, NULL);
 
 		for (auto i = fxdevs.begin(); i != fxdevs.end(); i++) {
 			// Saving device data..

@@ -13,8 +13,11 @@
 #include "../backend/FXHelper.h"
 #include "../backend/EventHandler.h"
 #include "../backend/CockpitBridge.h"
+#include "../backend/BatteryMonitor.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
+#include <fstream>
+#include <sstream>
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -74,16 +77,105 @@ static std::wstring GetExeDirectory() {
     return std::wstring(path);
 }
 
+static void UpdateTrayIconAndTooltip() {
+    if (!g_trayAdded || !conf) return;
+    UINT iconRes = conf->lightsOn ? (conf->stateDimmed ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON) : IDI_ALIENFX_OFF;
+    g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
+
+    std::wstring tip = L"AlienCockpit | Lights: ";
+    tip += (conf->lightsOn ? L"ON" : L"OFF");
+
+    auto batts = BatteryMonitor::GetAllBatteries();
+    for (const auto& b : batts) {
+        std::wstring part;
+        if (b.type == "system") {
+            part = L" | Laptop: " + std::to_wstring(b.percentage) + L"%";
+        } else if (b.type == "mouse") {
+            part = L" | Mouse: " + std::to_wstring(b.percentage) + L"%";
+        } else {
+            part = L" | " + Utf8ToWide(b.name.substr(0, 14)) + L": " + std::to_wstring(b.percentage) + L"%";
+        }
+        if (tip.size() + part.size() < 127) {
+            tip += part;
+        }
+    }
+    wcsncpy_s(g_nid.szTip, tip.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+}
+
+static void EnsureDefaultDeviceMappings() {
+    if (!conf) return;
+    std::wstring csvPath = GetExeDirectory() + L"\\Mappings\\devices.csv";
+    std::string csvPathUtf8 = WideToUtf8(csvPath);
+
+    bool anyAdded = false;
+    for (auto& dev : conf->afx_dev.fxdevs) {
+        if (!dev.present || !dev.lights.empty()) continue;
+
+        // 1. Try matching vid/pid in Mappings/devices.csv
+        std::ifstream file(csvPathUtf8);
+        if (file.is_open()) {
+            std::string line;
+            bool inMatchingDevice = false;
+            while (std::getline(file, line)) {
+                if (line.empty()) continue;
+                std::vector<std::string> cols;
+                std::string cur;
+                bool inQuotes = false;
+                for (char ch : line) {
+                    if (ch == '\'') { inQuotes = !inQuotes; }
+                    else if (ch == ',' && !inQuotes) { cols.push_back(cur); cur.clear(); }
+                    else if (ch != '\r' && ch != '\n') { cur.push_back(ch); }
+                }
+                cols.push_back(cur);
+                if (cols.empty()) continue;
+
+                if (cols[0] == "0" && cols.size() >= 4) {
+                    int fvid = std::atoi(cols[1].c_str());
+                    int fpid = std::atoi(cols[2].c_str());
+                    inMatchingDevice = (fvid == dev.vid && fpid == dev.pid);
+                } else if (cols[0] == "3") {
+                    inMatchingDevice = false;
+                } else if (inMatchingDevice && cols[0] == "1" && cols.size() >= 4) {
+                    AlienFX_SDK::Afx_light l{};
+                    l.lightid = static_cast<byte>(std::atoi(cols[1].c_str()));
+                    l.flags = static_cast<WORD>(std::atoi(cols[2].c_str()));
+                    l.name = cols[3];
+                    dev.lights.push_back(l);
+                    anyAdded = true;
+                }
+            }
+        }
+
+        // 2. Fallback: populate default probeable zones (0..15) for new/unmapped devices (e.g. 2025 AW-ELC)
+        if (dev.lights.empty()) {
+            for (byte i = 0; i < 16; ++i) {
+                AlienFX_SDK::Afx_light l{};
+                l.lightid = i;
+                l.flags = 0;
+                l.name = "LED Zone " + std::to_string(i);
+                dev.lights.push_back(l);
+            }
+            anyAdded = true;
+        }
+    }
+    if (anyAdded) {
+        conf->afx_dev.SaveMappings();
+    }
+}
+
 static void InitTrayIcon(HWND hwnd) {
     g_nid.cbSize = sizeof(NOTIFYICONDATAW);
     g_nid.hWnd = hwnd;
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_ALIENCOCKPIT));
-    wcscpy_s(g_nid.szTip, L"AlienCockpit — Space Command Center");
+    UINT iconRes = (conf && !conf->lightsOn) ? IDI_ALIENFX_OFF : IDI_ALIENFX_ON;
+    g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
+    wcscpy_s(g_nid.szTip, L"AlienCockpit — AWCC Alternative");
     if (Shell_NotifyIconW(NIM_ADD, &g_nid)) {
         g_trayAdded = true;
+        UpdateTrayIconAndTooltip();
     }
 }
 
@@ -284,19 +376,24 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_TIMER:
-        if (wParam == TIMER_TELEMETRY && IsWindowVisible(hwnd) && g_webview) {
-            PostJsonToUI(CockpitBridge::BuildTelemetryJson());
+        if (wParam == TIMER_TELEMETRY) {
+            UpdateTrayIconAndTooltip();
+            if (IsWindowVisible(hwnd) && g_webview) {
+                PostJsonToUI(CockpitBridge::BuildTelemetryJson());
+            }
         }
         return 0;
 
     case WM_DEVICECHANGE:
         if (conf && fxhl && wParam == 0x0007 /* DBT_DEVNODES_CHANGED */) {
             if (conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr)) {
+                EnsureDefaultDeviceMappings();
                 fxhl->ClearAndRefresh(true);
                 if (g_webview) {
                     PostJsonToUI(CockpitBridge::BuildFullStateJson());
                 }
             }
+            UpdateTrayIconAndTooltip();
         }
         break;
 
@@ -314,8 +411,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             ShowMainWindow(hwnd);
         } else if (id == IDM_TRAY_LIGHTS && conf && fxhl) {
             conf->lightsOn = conf->lightsOn ? 0 : 1;
-            fxhl->SetState();
+            fxhl->SetState(true);
+            if (conf->lightsOn) {
+                fxhl->ClearAndRefresh(true);
+            }
             conf->Save();
+            UpdateTrayIconAndTooltip();
             PostJsonToUI(CockpitBridge::BuildFullStateJson());
         } else if (id == IDM_TRAY_EXIT) {
             DestroyWindow(hwnd);
@@ -323,6 +424,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             size_t idx = id - IDM_TRAY_PROF_BASE;
             if (idx < conf->profiles.size()) {
                 eve->SwitchActiveProfile(conf->profiles[idx], true);
+                UpdateTrayIconAndTooltip();
                 PostJsonToUI(CockpitBridge::BuildFullStateJson());
             }
         }
@@ -356,12 +458,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     // Initialize AlienFX & AlienFan backend
     conf = new ConfigHandler();
     conf->Load();
+    mon = new MonHelper();
     fxhl = new FXHelper();
     eve = new EventHandler();
-    if (conf->fanControl) {
+    if (conf->fanControl && mon) {
         eve->ToggleFans();
     }
     conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr);
+    EnsureDefaultDeviceMappings();
     fxhl->Start();
     eve->StartProfiles();
 
@@ -433,6 +537,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
         fxhl->Stop();
         delete fxhl;
         fxhl = nullptr;
+    }
+    if (mon) {
+        delete mon;
+        mon = nullptr;
     }
     if (conf) {
         conf->Save();
