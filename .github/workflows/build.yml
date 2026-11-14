@@ -3,9 +3,13 @@ name: Build AlienCockpit (Windows 11 x64)
 on:
   push:
     branches: [ master, main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ master, main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -39,8 +43,23 @@ jobs:
           xcopy /E /I /Y AlienCockpit\ui dist\ui\
           xcopy /E /I /Y AlienCockpit\Mappings dist\Mappings\
 
+      - name: Create Release Zip
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          Compress-Archive -Path dist\* -DestinationPath "AlienCockpit-$tag-win11-x64.zip" -Force
+
       - name: Upload AlienCockpit Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AlienCockpit-win11-x64
           path: dist/
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AlienCockpit ${{ github.ref_name }}"
+          files: "AlienCockpit-${{ github.ref_name }}-win11-x64.zip"
+          generate_release_notes: true
