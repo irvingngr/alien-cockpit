@@ -77,6 +77,6 @@ You do **not** need Visual Studio or any compiler to use AlienCockpit:
 
 ## Credits & License
 
-**AlienCockpit** is crafted by **Irving Ngr** (🇻🇪 Venezuela) as a lightweight Windows 11 fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
+**AlienCockpit** is crafted by **Irving Ngr** as a lightweight Windows 11 fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
 
 Licensed under the [MIT License](LICENSE).
