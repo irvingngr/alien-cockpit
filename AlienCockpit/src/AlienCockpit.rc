@@ -5,5 +5,3 @@ IDI_ALIENCOCKPIT    ICON    "..\\assets\\alien.ico"
 IDI_ALIENFX_ON      ICON    "..\\assets\\alien_on.ico"
 IDI_ALIENFX_OFF     ICON    "..\\assets\\alien_off.ico"
 IDI_ALIENFX_DIM     ICON    "..\\assets\\alien_dim.ico"
-
-1 RT_MANIFEST "AlienCockpit.manifest"
