@@ -50,30 +50,31 @@ body {
   height: 100vh;
 }
 
-/* Top HUD */
+/* Top HUD (also acts as seamless Windows 11 titlebar) */
 .hud-topbar {
-  height: 64px;
+  height: 58px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  background: rgba(11, 16, 29, 0.9);
+  padding: 0 0 0 18px;
+  background: rgba(11, 16, 29, 0.92);
   border-bottom: 1px solid var(--border-subtle);
   backdrop-filter: blur(12px);
+  cursor: default;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
-.ansi-alien {
-  font-family: var(--font-mono);
-  font-size: 7px;
-  line-height: 7.5px;
-  color: var(--cyan);
-  text-shadow: 0 0 8px rgba(0, 240, 255, 0.65);
+.brand-logo {
+  height: 38px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 8px rgba(123, 44, 191, 0.45));
+  pointer-events: none;
 }
 
 .brand-text {
@@ -82,14 +83,14 @@ body {
 }
 
 .brand-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 2.5px;
+  letter-spacing: 2.2px;
 }
 
 .brand-sub {
-  font-size: 9px;
-  letter-spacing: 1.8px;
+  font-size: 10px;
+  letter-spacing: 1.4px;
   color: var(--text-muted);
 }
 
@@ -99,16 +100,16 @@ body {
 
 .hud-telemetry {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .hud-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  padding: 6px 12px;
+  padding: 5px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
@@ -124,10 +125,46 @@ body {
   font-weight: 600;
 }
 
+.hud-right {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  gap: 12px;
+}
+
 .hud-controls {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+}
+
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+
+.win-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+}
+
+.win-btn.win-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
 }
 
 .brightness-wrap {
@@ -848,10 +885,20 @@ body {
   gap: 24px;
 }
 
-.ansi-alien-lg {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 11px;
-  color: var(--cyan);
-  text-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
+.about-logo {
+  height: 76px;
+  width: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 14px rgba(123, 44, 191, 0.5));
+}
+
+.hw-light-item.selected {
+  border: 1px solid var(--cyan);
+  background: rgba(0, 240, 255, 0.1);
+}
+
+@media (max-width: 1120px) {
+  .lighting-workspace {
+    grid-template-columns: 1fr;
+  }
 }

@@ -1,15 +1,8 @@
-```text
-      ▄▄▄▄▄▄▄▄▄▄
-    ▄█▀        ▀█▄
-   █▀   ▄▄  ▄▄   ▀█
-   █   ███  ███   █
-   █              █
-    ▀▄   ▄▄▄▄   ▄▀
-      ▀▄▄    ▄▄▀
-         ▀▀▀▀
-```
+<p align="center">
+  <img src="AlienCockpit/assets/cockpit.png" alt="AlienCockpit Logo" width="220" />
+</p>
 
-# AlienCockpit
+# AlienCockpit — AWCC Alternative
 
 **AlienCockpit** is a fast, lightweight, and stable command center for **Windows 11** built as a modern fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools). It pairs the rock-solid hardware stability of the open-source `AlienFX-SDK` and `AlienFan-SDK` C++ engines with an intuitive, space-gaming cockpit interface powered by Microsoft Edge WebView2.
 

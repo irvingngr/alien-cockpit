@@ -7,6 +7,7 @@ const state = {
   activeProfileId: 0,
   settings: { lightsOn: true, brightness: 255, startWindows: false, startMinimized: true },
   selectedTargets: new Set(), // key IDs or zone IDs
+  selectedHwLights: new Set(), // direct physical LED IDs from Hardware LED Mapper
   selectedDevicePid: 0,
   activeView: 'keyboard',
   effect: 'static',
@@ -181,9 +182,10 @@ function initNavigation() {
   });
 
   // Quick Select buttons
-  document.querySelectorAll('.qs-btn').forEach((btn) => {
+  document.querySelectorAll('.qs-btn[data-select]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.select;
+      state.selectedHwLights.clear();
       state.selectedTargets.clear();
       if (mode !== 'clear') {
         document.querySelectorAll('.keycap').forEach((k) => {
@@ -199,6 +201,7 @@ function initNavigation() {
   // Mouse & Chassis zones
   document.querySelectorAll('.mouse-zone, .chassis-zone').forEach((zone) => {
     zone.addEventListener('click', (e) => {
+      state.selectedHwLights.clear();
       if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
       toggleTargetSelection(zone.dataset.zoneId);
       const labelId = state.activeView === 'mouse' ? 'mouse-zone-label' : 'chassis-zone-label';
@@ -251,11 +254,12 @@ function initLightingControls() {
   });
 
   document.getElementById('btn-apply-lighting').addEventListener('click', () => {
-    const targets = Array.from(state.selectedTargets).map((x) => parseInt(x, 10));
-    if (targets.length === 0) return;
+    const uiTargets = Array.from(state.selectedTargets).map((x) => parseInt(x, 10));
+    const hwTargets = Array.from(state.selectedHwLights);
+    if (uiTargets.length === 0 && hwTargets.length === 0) return;
 
     // Update UI visual preview immediately
-    targets.forEach((id) => {
+    uiTargets.forEach((id) => {
       state.keyColors[id] = state.colorPrimary;
       const keyEl = document.querySelector(`.keycap[data-id="${id}"]`);
       if (keyEl) {
@@ -268,10 +272,44 @@ function initLightingControls() {
       }
     });
 
+    const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
+    let resolvedIds = hwTargets;
+
+    if (resolvedIds.length === 0) {
+      if (dev && dev.lights && dev.lights.length > 0) {
+        const nonIndicatorLights = dev.lights.filter((l) => !(l.flags & 3));
+        const usableLights = nonIndicatorLights.length > 0 ? nonIndicatorLights : dev.lights;
+
+        if (state.activeView === 'keyboard') {
+          const matched = [];
+          uiTargets.forEach((sc) => {
+            const found = dev.lights.find((l) => l.scancode === sc);
+            if (found) matched.push(found.id);
+          });
+          if (matched.length > 0) {
+            resolvedIds = Array.from(new Set(matched));
+          } else {
+            // Zone-based keyboard without per-key scancodes: apply to usable hardware zones
+            resolvedIds = usableLights.map((l) => l.id);
+          }
+        } else {
+          const matched = [];
+          uiTargets.forEach((zid) => {
+            const exact = dev.lights.find((l) => l.id === zid);
+            if (exact) matched.push(exact.id);
+            else if (usableLights.length > 0) matched.push(usableLights[zid % usableLights.length].id);
+          });
+          resolvedIds = Array.from(new Set(matched));
+        }
+      } else {
+        resolvedIds = uiTargets;
+      }
+    }
+
     sendCommand({
       cmd: 'applyZoneColor',
-      pid: state.selectedDevicePid,
-      lightIds: targets,
+      pid: dev ? dev.pid : state.selectedDevicePid,
+      lightIds: resolvedIds,
       color: state.colorPrimary,
       color2: state.colorSecondary,
       effect: state.effect,
@@ -428,16 +466,22 @@ function applyFullState(data) {
     document.getElementById('set-dim-battery').checked = !!data.settings.dimmedBatt;
   }
 
-  // Update device dropdown
+  // Update device dropdown (preserving currently selected device)
   const dd = document.getElementById('hw-device-dropdown');
+  const hasSelected = state.devices.some((d) => d.pid === state.selectedDevicePid);
+  if (!hasSelected) {
+    state.selectedDevicePid = state.devices.length > 0 ? state.devices[0].pid : 0;
+  }
   dd.innerHTML = '';
-  state.devices.forEach((d, idx) => {
+  state.devices.forEach((d) => {
     const opt = document.createElement('option');
     opt.value = d.pid;
     opt.textContent = d.name;
     dd.appendChild(opt);
-    if (idx === 0 && !state.selectedDevicePid) state.selectedDevicePid = d.pid;
   });
+  if (state.selectedDevicePid) {
+    dd.value = String(state.selectedDevicePid);
+  }
   renderHardwareLights();
 
   // Update profiles
@@ -471,8 +515,17 @@ function renderHardwareLights() {
   }
   (dev.lights || []).forEach((l) => {
     const row = document.createElement('div');
-    row.className = 'hw-light-item';
+    row.className = `hw-light-item ${state.selectedHwLights.has(l.id) ? 'selected' : ''}`;
+    row.dataset.lid = l.id;
+    row.style.cursor = 'pointer';
     row.innerHTML = `<span>#${l.id} ${l.name || 'Unnamed LED'}</span><button class="hw-blink-btn">Blink</button>`;
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.hw-blink-btn')) return;
+      if (!e.ctrlKey && !e.shiftKey) state.selectedHwLights.clear();
+      if (state.selectedHwLights.has(l.id)) state.selectedHwLights.delete(l.id);
+      else state.selectedHwLights.add(l.id);
+      refreshSelectionUI();
+    });
     row.querySelector('.hw-blink-btn').addEventListener('click', () => {
       sendCommand({ cmd: 'blinkLight', pid: dev.pid, lightId: l.id });
     });
@@ -483,11 +536,47 @@ function renderHardwareLights() {
 window.activateProf = (id) => sendCommand({ cmd: 'activateProfile', id });
 window.deleteProf = (id) => sendCommand({ cmd: 'deleteProfile', id });
 
+function initWindowControls() {
+  const minBtn = document.getElementById('win-min');
+  const maxBtn = document.getElementById('win-max');
+  const closeBtn = document.getElementById('win-close');
+  const titlebar = document.getElementById('titlebar');
+
+  if (minBtn) minBtn.addEventListener('click', () => sendCommand({ cmd: 'windowMinimize' }));
+  if (maxBtn) maxBtn.addEventListener('click', () => sendCommand({ cmd: 'windowMaximize' }));
+  if (closeBtn) closeBtn.addEventListener('click', () => sendCommand({ cmd: 'windowClose' }));
+
+  if (titlebar) {
+    titlebar.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('button, input, select, a, .hud-pill, .window-controls')) return;
+      sendCommand({ cmd: 'windowDrag' });
+    });
+    titlebar.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button, input, select, a, .hud-pill, .window-controls')) return;
+      sendCommand({ cmd: 'windowMaximize' });
+    });
+  }
+}
+
 function initMiscActions() {
   document.getElementById('hw-device-dropdown').addEventListener('change', (e) => {
     state.selectedDevicePid = parseInt(e.target.value, 10);
+    state.selectedHwLights.clear();
     renderHardwareLights();
+    refreshSelectionUI();
   });
+
+  const btnSelectHwAll = document.getElementById('btn-select-hw-all');
+  if (btnSelectHwAll) {
+    btnSelectHwAll.addEventListener('click', () => {
+      const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
+      if (!dev || !dev.lights) return;
+      state.selectedHwLights.clear();
+      dev.lights.forEach((l) => state.selectedHwLights.add(l.id));
+      refreshSelectionUI();
+    });
+  }
 
   document.getElementById('btn-create-profile').addEventListener('click', () => {
     const inp = document.getElementById('new-profile-name');
@@ -534,6 +623,7 @@ document.addEventListener('DOMContentLoaded', () => {
   buildKeyboard();
   initNavigation();
   initLightingControls();
+  initWindowControls();
   initMiscActions();
   renderFanCurve();
 

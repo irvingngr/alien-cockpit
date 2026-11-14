@@ -127,7 +127,7 @@ std::string CockpitBridge::BuildFullStateJson() {
     SimpleJson::Value settings = SimpleJson::Value::Object();
     settings["lightsOn"] = (conf->lightsOn != 0);
     settings["dimmed"] = (conf->dimmed != 0);
-    settings["brightness"] = static_cast<int>(conf->dimmingPower);
+    settings["brightness"] = static_cast<int>(conf->stateDimmed ? conf->dimmingPower : conf->fullPower);
     settings["gammaCorrection"] = (conf->gammaCorrection != 0);
     settings["enableProfSwitch"] = (conf->enableProfSwitch != 0);
     settings["enableEffects"] = (conf->enableEffects != 0);
@@ -263,7 +263,10 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
     if (cmd == "toggleLights" && conf && fxhl) {
         conf->lightsOn = msg.get("on").asBool(true) ? 1 : 0;
-        fxhl->SetState();
+        fxhl->SetState(true);
+        if (conf->lightsOn) {
+            fxhl->ClearAndRefresh(true);
+        }
         conf->Save();
         return BuildFullStateJson();
     }
@@ -272,6 +275,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         int val = msg.get("value").asInt(100);
         if (val < 0) val = 0;
         if (val > 255) val = 255;
+        conf->fullPower = static_cast<DWORD>(val);
         conf->dimmingPower = static_cast<DWORD>(val);
         fxhl->SetState(true);
         conf->Save();
@@ -280,6 +284,14 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
     if (cmd == "applyZoneColor" && conf && fxhl) {
         WORD pid = static_cast<WORD>(msg.get("pid").asInt(0));
+        if (!pid) {
+            for (const auto& d : conf->afx_dev.fxdevs) {
+                if (d.present) {
+                    pid = d.pid;
+                    break;
+                }
+            }
+        }
         std::string hex1 = msg.get("color").asString("#00f0ff");
         std::string hex2 = msg.get("color2").asString("#7b2cbf");
         std::string eff = msg.get("effect").asString("static");
@@ -292,12 +304,40 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         HexToRgb(hex1, r1, g1, b1);
         HexToRgb(hex2, r2, g2, b2);
 
-        if (conf->activeProfile && !lightIds.empty()) {
+        if (!conf->activeProfile) {
+            conf->activeProfile = conf->FindDefaultProfile();
+        }
+
+        if (conf->activeProfile && pid && !lightIds.empty()) {
+            // Remove newly-targeted (pid, lid) pairs from existing groups in active profile so they don't conflict
+            for (auto it = conf->activeProfile->lightsets.begin(); it != conf->activeProfile->lightsets.end(); ) {
+                AlienFX_SDK::Afx_group* existingGrp = conf->afx_dev.GetGroupById(it->group);
+                if (existingGrp) {
+                    for (auto lit = existingGrp->lights.begin(); lit != existingGrp->lights.end(); ) {
+                        bool match = false;
+                        if (lit->did == pid) {
+                            for (const auto& lidVal : lightIds) {
+                                if (lit->lid == static_cast<WORD>(lidVal.asInt(0))) {
+                                    match = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (match) lit = existingGrp->lights.erase(lit);
+                        else ++lit;
+                    }
+                    if (existingGrp->lights.empty()) {
+                        it = conf->activeProfile->lightsets.erase(it);
+                        continue;
+                    }
+                }
+                ++it;
+            }
+
             // Find or create group for this zone
             DWORD targetGid = static_cast<DWORD>(msg.get("groupId").asInt(0));
             AlienFX_SDK::Afx_group* grp = targetGid ? conf->afx_dev.GetGroupById(targetGid) : nullptr;
             if (!grp) {
-                // Create a new group
                 DWORD maxGid = 0x10000;
                 auto* groupsVec = conf->afx_dev.GetGroups();
                 if (groupsVec) {
@@ -358,7 +398,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 targetSet->color.push_back(act2);
             }
 
-            fxhl->Refresh(true);
+            fxhl->ClearAndRefresh(true);
             conf->Save();
         }
         return BuildFullStateJson();

@@ -3,24 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AlienCockpit — Space Command Center</title>
+  <title>AlienCockpit — AWCC Alternative</title>
+  <link rel="icon" type="image/png" href="assets/cockpit.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="starfield"></div>
   <div class="cockpit-shell">
-    <!-- Top HUD Bar -->
-    <header class="hud-topbar">
+    <!-- Top HUD Bar (also acts as seamless Windows 11 drag/caption bar) -->
+    <header class="hud-topbar" id="titlebar">
       <div class="brand">
-        <pre class="ansi-alien" aria-label="AlienCockpit Logo">
-  ▄▄▄▄▄
-▄█▀   ▀█▄
-█ ▀▄ ▄▀ █
-▀▄  ▄  ▄▀
-  ▀▀▀▀▀</pre>
+        <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="brand-logo" />
         <div class="brand-text">
           <span class="brand-title">ALIEN<span class="accent">COCKPIT</span></span>
-          <span class="brand-sub">ORBITAL COMMAND &amp; TELEMETRY</span>
+          <span class="brand-sub">AWCC Alternative</span>
         </div>
       </div>
 
@@ -43,15 +39,29 @@
         </div>
       </div>
 
-      <div class="hud-controls">
-        <div class="brightness-wrap" title="Master Brightness">
-          <span class="ctrl-label">BRIGHT</span>
-          <input type="range" id="master-brightness" min="0" max="255" value="255" />
-          <span class="ctrl-val" id="master-brightness-val">100%</span>
+      <div class="hud-right">
+        <div class="hud-controls">
+          <div class="brightness-wrap" title="Master Brightness">
+            <span class="ctrl-label">BRIGHT</span>
+            <input type="range" id="master-brightness" min="0" max="255" value="255" />
+            <span class="ctrl-val" id="master-brightness-val">100%</span>
+          </div>
+          <button class="btn-power active" id="btn-master-lights" title="Toggle All Lights">
+            <span class="dot"></span> LIGHTS ON
+          </button>
         </div>
-        <button class="btn-power active" id="btn-master-lights" title="Toggle All Lights">
-          <span class="dot"></span> LIGHTS ON
-        </button>
+
+        <div class="window-controls" aria-label="Window Controls">
+          <button class="win-btn" id="win-min" title="Minimize" aria-label="Minimize">
+            <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+          <button class="win-btn" id="win-max" title="Maximize" aria-label="Maximize">
+            <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+          <button class="win-btn win-close" id="win-close" title="Close to Tray" aria-label="Close">
+            <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -399,18 +409,10 @@
           </div>
 
           <div class="card about-card">
-            <pre class="ansi-alien-lg">
-      ▄▄▄▄▄▄▄▄▄▄
-    ▄█▀        ▀█▄
-   █▀   ▄▄  ▄▄   ▀█
-   █   ███  ███   █
-   █              █
-    ▀▄   ▄▄▄▄   ▄▀
-      ▀▄▄    ▄▄▀
-         ▀▀▀▀</pre>
+            <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div>
-              <h3>AlienCockpit v1.0</h3>
-              <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with an intuitive orbital cockpit interface for Windows 11.</p>
+              <h3>AlienCockpit v1.0 — AWCC Alternative</h3>
+              <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with an intuitive cockpit interface for Windows 11.</p>
             </div>
           </div>
         </section>

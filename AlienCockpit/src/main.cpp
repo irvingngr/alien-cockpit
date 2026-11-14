@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -175,11 +176,28 @@ static void InitWebView(HWND hwnd) {
 
                             g_webview->add_WebMessageReceived(
                                 Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                                    [](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                    [hwnd](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
                                         LPWSTR msgRaw = nullptr;
                                         if (SUCCEEDED(args->get_WebMessageAsJson(&msgRaw)) && msgRaw) {
                                             std::string jsonStr = WideToUtf8(msgRaw);
                                             CoTaskMemFree(msgRaw);
+                                            if (jsonStr.find("\"windowDrag\"") != std::string::npos) {
+                                                ReleaseCapture();
+                                                SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                                                return S_OK;
+                                            }
+                                            if (jsonStr.find("\"windowMinimize\"") != std::string::npos) {
+                                                ShowWindow(hwnd, SW_MINIMIZE);
+                                                return S_OK;
+                                            }
+                                            if (jsonStr.find("\"windowMaximize\"") != std::string::npos) {
+                                                ShowWindow(hwnd, IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+                                                return S_OK;
+                                            }
+                                            if (jsonStr.find("\"windowClose\"") != std::string::npos) {
+                                                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                                                return S_OK;
+                                            }
                                             std::string resp = CockpitBridge::HandleMessage(jsonStr);
                                             PostJsonToUI(resp);
                                         }
@@ -195,6 +213,60 @@ static void InitWebView(HWND hwnd) {
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_NCCALCSIZE:
+        if (wParam == TRUE) {
+            NCCALCSIZE_PARAMS* pncsp = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
+            UINT dpi = GetDpiForWindow(hwnd);
+            int frameX = GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+            int frameY = GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+            if (IsZoomed(hwnd)) {
+                pncsp->rgrc[0].left += frameX;
+                pncsp->rgrc[0].top += frameY;
+                pncsp->rgrc[0].right -= frameX;
+                pncsp->rgrc[0].bottom -= frameY;
+            } else {
+                pncsp->rgrc[0].left += frameX;
+                pncsp->rgrc[0].right -= frameX;
+                pncsp->rgrc[0].bottom -= frameY;
+            }
+            return 0;
+        }
+        break;
+
+    case WM_NCHITTEST: {
+        LRESULT hit = DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (hit != HTCLIENT) return hit;
+        if (IsZoomed(hwnd)) return HTCLIENT;
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(hwnd, &pt);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        UINT dpi = GetDpiForWindow(hwnd);
+        int border = MulDiv(6, dpi, 96);
+        bool top = pt.y < border;
+        bool bottom = pt.y >= rc.bottom - border;
+        bool left = pt.x < border;
+        bool right = pt.x >= rc.right - border;
+        if (top && left) return HTTOPLEFT;
+        if (top && right) return HTTOPRIGHT;
+        if (bottom && left) return HTBOTTOMLEFT;
+        if (bottom && right) return HTBOTTOMRIGHT;
+        if (top) return HTTOP;
+        if (bottom) return HTBOTTOM;
+        if (left) return HTLEFT;
+        if (right) return HTRIGHT;
+        return HTCLIENT;
+    }
+
+    case WM_GETMINMAXINFO: {
+        MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
+        UINT dpi = GetDpiForWindow(hwnd);
+        if (!dpi) dpi = 96;
+        mmi->ptMinTrackSize.x = MulDiv(960, dpi, 96);
+        mmi->ptMinTrackSize.y = MulDiv(640, dpi, 96);
+        return 0;
+    }
+
     case WM_SIZE:
         if (g_webviewController) {
             RECT bounds{};
@@ -216,6 +288,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             PostJsonToUI(CockpitBridge::BuildTelemetryJson());
         }
         return 0;
+
+    case WM_DEVICECHANGE:
+        if (conf && fxhl && wParam == 0x0007 /* DBT_DEVNODES_CHANGED */) {
+            if (conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr)) {
+                fxhl->ClearAndRefresh(true);
+                if (g_webview) {
+                    PostJsonToUI(CockpitBridge::BuildFullStateJson());
+                }
+            }
+        }
+        break;
 
     case WM_TRAYICON:
         if (lParam == WM_LBUTTONDBLCLK || lParam == WM_LBUTTONUP) {
@@ -278,6 +361,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     if (conf->fanControl) {
         eve->ToggleFans();
     }
+    conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr);
     fxhl->Start();
     eve->StartProfiles();
 
@@ -291,19 +375,37 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     wc.lpszClassName = L"AlienCockpitWindowClass";
     RegisterClassExW(&wc);
 
+    RECT wa{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+    UINT sysDpi = GetDpiForSystem();
+    if (!sysDpi) sysDpi = 96;
+    int waW = wa.right - wa.left;
+    int waH = wa.bottom - wa.top;
+    int winW = MulDiv(1400, sysDpi, 96);
+    int winH = MulDiv(880, sysDpi, 96);
+    if (winW > waW - 24) winW = waW - 24;
+    if (winH > waH - 24) winH = waH - 24;
+    int winX = wa.left + (waW - winW) / 2;
+    int winY = wa.top + (waH - winH) / 2;
+
     HWND hwnd = CreateWindowExW(
         0,
         L"AlienCockpitWindowClass",
         L"AlienCockpit",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820,
+        winX, winY, winW, winH,
         nullptr, nullptr, hInstance, nullptr);
 
     mDlg = hwnd;
 
-    // Enable Windows 11 Immersive Dark Titlebar
+    // Enable Windows 11 Immersive Dark Mode, Rounded Corners & Seamless Border
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+    DWORD cornerPref = 2 /* DWMWCP_ROUND */;
+    DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &cornerPref, sizeof(cornerPref));
+    MARGINS margins = { 0, 0, 1, 0 };
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
 
     InitTrayIcon(hwnd);
     InitWebView(hwnd);
