@@ -655,7 +655,7 @@ static void QuerySonyAndHidppBatteries(std::vector<BatteryDeviceInfo>& result) {
                         if (off < rpt.size()) {
                             charging = (rpt[off] & 0x10) != 0;
                             BYTE raw = rpt[off] & 0x0F;
-                            pct = charging ? std::min(100, static_cast<int>(raw) * 10) : std::clamp(static_cast<int>(raw) * 10 + 5, 5, 100);
+                            pct = charging ? std::clamp(static_cast<int>(raw) * 10, 0, 100) : std::clamp(static_cast<int>(raw) * 10 + 5, 5, 100);
                         }
                     }
                     if (pct >= 0) {
