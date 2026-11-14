@@ -72,9 +72,9 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;backend;kiss_fft;..\Common;..\RegHelperLib;..\AlienFX-SDK\AlienFX_SDK;..\alienfan-tools\alienfan-SDK_v2;..\alienfan-tools\alienfan-shared;..\alienfan-tools\alienfan-mon;..\alienfan-tools\alienfan-curve;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <ConformanceMode>true</ConformanceMode>
+      <ConformanceMode>false</ConformanceMode>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

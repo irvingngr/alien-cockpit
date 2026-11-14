@@ -299,19 +299,22 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             if (!grp) {
                 // Create a new group
                 DWORD maxGid = 0x10000;
-                for (const auto& g : conf->afx_dev.GetGroups()) {
-                    if (g.gid >= maxGid) maxGid = g.gid + 1;
+                auto* groupsVec = conf->afx_dev.GetGroups();
+                if (groupsVec) {
+                    for (const auto& g : *groupsVec) {
+                        if (g.gid >= maxGid) maxGid = g.gid + 1;
+                    }
+                    AlienFX_SDK::Afx_group newGrp;
+                    newGrp.gid = maxGid;
+                    newGrp.name = zoneName;
+                    for (const auto& lidVal : lightIds) {
+                        AlienFX_SDK::Afx_groupLight gl;
+                        gl.did = pid;
+                        gl.lid = static_cast<WORD>(lidVal.asInt(0));
+                        newGrp.lights.push_back(gl);
+                    }
+                    groupsVec->push_back(newGrp);
                 }
-                AlienFX_SDK::Afx_group newGrp;
-                newGrp.gid = maxGid;
-                newGrp.name = zoneName;
-                for (const auto& lidVal : lightIds) {
-                    AlienFX_SDK::Afx_groupLight gl;
-                    gl.did = pid;
-                    gl.lid = static_cast<WORD>(lidVal.asInt(0));
-                    newGrp.lights.push_back(gl);
-                }
-                conf->afx_dev.GetGroups().push_back(newGrp);
                 targetGid = maxGid;
             } else {
                 grp->lights.clear();
