@@ -130,7 +130,8 @@ namespace AlienFX_SDK {
 				if (!ok) {
 					ok = HidD_SetFeature(devHandle, buffer, length);
 				}
-				if (ok && !abortRequested.load(std::memory_order_acquire)) Sleep(2);
+				const bool isV4FastPixelWrite = (pid == 0x0551 && command[0] >= 2 && command[1] == 0x03 && command[2] == 0x27);
+				if (ok && !isV4FastPixelWrite && !abortRequested.load(std::memory_order_acquire)) Sleep(2);
 				return ok != FALSE;
 			}
 			case API_V5:
@@ -445,7 +446,7 @@ namespace AlienFX_SDK {
 			{
 				bool ok = PrepareAndSend(COMMV4_control);
 				inSet = false;
-				if (ok && !abortRequested.load(std::memory_order_acquire)) Sleep(15);
+				if (ok && !abortRequested.load(std::memory_order_acquire)) Sleep(pid == 0x0551 ? 4 : 15);
 				return ok;
 			} break;
 			case API_V3: case API_V2:

@@ -1267,38 +1267,61 @@ html, body {
   accent-color: var(--cyan);
 }
 
-.touchpad-behavior-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  flex-wrap: wrap;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  font-size: 12px;
-  color: var(--text-secondary);
+.hardware-mapper {
+  margin-top: 14px;
+  padding-top: 18px;
+  border-top: 1px dashed rgba(0, 240, 255, 0.22);
 }
 
-.touchpad-opt-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
+#btn-apply-lighting {
+  position: relative;
+  border: 2px solid transparent;
+  transition: filter 0.15s, border-color 0.2s, box-shadow 0.25s;
 }
 
-.touchpad-opt-label input[type="checkbox"] {
-  accent-color: var(--cyan);
+#btn-apply-lighting.has-pending-apply {
+  border-color: #fcee0a;
+  box-shadow:
+    0 0 12px rgba(252, 238, 10, 0.72),
+    0 0 26px rgba(252, 238, 10, 0.36),
+    inset 0 0 12px rgba(252, 238, 10, 0.35);
+  animation: cyberApplyGlow 1.5s ease-in-out infinite;
 }
 
-.touchpad-sec-input {
-  width: 64px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 3px 6px;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 12px;
+#btn-apply-lighting.has-pending-apply::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 9px;
+  padding: 2px;
+  background: linear-gradient(120deg, #fcee0a, #fff685, #00f0ff, #fcee0a);
+  background-size: 260% 260%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: cyberBorderFlow 2.2s linear infinite;
+}
+
+@keyframes cyberApplyGlow {
+  0%, 100% {
+    box-shadow:
+      0 0 10px rgba(252, 238, 10, 0.65),
+      0 0 22px rgba(252, 238, 10, 0.3),
+      inset 0 0 8px rgba(252, 238, 10, 0.25);
+  }
+  50% {
+    box-shadow:
+      0 0 18px rgba(252, 238, 10, 0.95),
+      0 0 34px rgba(252, 238, 10, 0.55),
+      inset 0 0 14px rgba(252, 238, 10, 0.45);
+  }
+}
+
+@keyframes cyberBorderFlow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .intro-settings-row {

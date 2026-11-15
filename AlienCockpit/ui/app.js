@@ -1,6 +1,24 @@
 // AlienCockpit UI Controller
 const hasWebView = !!(window.chrome && window.chrome.webview);
 
+const REAR_EFFECTS = new Set(['scanner', 'comet', 'converge', 'syncbreath', 'syncmorph', 'aurora_bar']);
+const STD_TO_REAR_EFFECT = {
+  breathing: 'syncbreath',
+  morph: 'syncmorph',
+  aurora: 'aurora_bar',
+  wave: 'scanner',
+  pulse: 'converge',
+  spectrum: 'comet'
+};
+const REAR_TO_STD_EFFECT = {
+  syncbreath: 'breathing',
+  syncmorph: 'morph',
+  aurora_bar: 'aurora',
+  scanner: 'wave',
+  converge: 'pulse',
+  comet: 'spectrum'
+};
+
 const state = {
   devices: [],
   profiles: [],
@@ -19,14 +37,17 @@ const state = {
   auroraColors: ['#00f0ff', '#00ff9d', '#7b2cbf'],
   speed: 50,
   zoneBrightness: 100,
+  hasPendingApply: false,
   probeActive: false,
   probeLedId: 0,
   keyColors: {},
   keyBaseColors: {},
   keyBrightness: {},
+  keyMeta: {},
   zoneColors: {},
   zoneBaseColors: {},
   zoneBrightnessMap: {},
+  zoneMeta: {},
   hwLightMeta: new Map(),
   fanCurve: [
     { temp: 35, boost: 20 },
@@ -379,61 +400,146 @@ function getZoneMetaKey(view, zoneId) {
   return `${view}:${idStr}`;
 }
 
-function loadSelectionColorAndBrightness(preferredTargetId = null) {
+function markApplyPending(pending) {
+  state.hasPendingApply = !!pending;
+  const btn = document.getElementById('btn-apply-lighting');
+  if (btn) btn.classList.toggle('has-pending-apply', state.hasPendingApply);
+}
+
+function markDirtyIfSelected() {
+  if (state.selectedTargets.size > 0 || state.selectedHwLights.size > 0) {
+    markApplyPending(true);
+  }
+}
+
+function isRearLightbarSelected() {
+  if (state.activeView === 'mouse') return false;
   if (state.selectedHwLights.size > 0) {
-    const candidates = [];
-    const prefNum = preferredTargetId !== null ? parseInt(preferredTargetId, 10) : NaN;
-    if (!Number.isNaN(prefNum) && state.selectedHwLights.has(prefNum)) candidates.push(prefNum);
-    state.selectedHwLights.forEach((lid) => {
-      if (!candidates.includes(lid)) candidates.push(lid);
-    });
-    for (const lid of candidates) {
+    const dev = state.devices.find((d) => d.pid === state.selectedDevicePid);
+    if (dev && isChassisDevice(dev)) {
+      const ids = Array.from(state.selectedHwLights);
+      return ids.some((lid) => lid >= 0 && lid <= 30) && ids.every((lid) => lid >= 0 && lid <= 30);
+    }
+    return false;
+  }
+  if (state.activeView !== 'chassis') return false;
+  if (state.selectedTargets.size > 0) {
+    return Array.from(state.selectedTargets).some((id) => /^\d+$/.test(String(id)) && Number(id) >= 0 && Number(id) <= 30);
+  }
+  return REAR_EFFECTS.has(state.effect);
+}
+
+function syncAuroraPaletteActive(c1, c2, c3) {
+  const target = [normalizeHex(c1), normalizeHex(c2), normalizeHex(c3 || c1)];
+  let matched = false;
+  document.querySelectorAll('.palette-btn').forEach((btn) => {
+    const cols = (btn.dataset.colors || '').split(',').map((s) => normalizeHex(s)).filter(Boolean);
+    const isHit = cols.length >= 2 &&
+      cols[0] === target[0] &&
+      cols[1] === target[1] &&
+      (cols[2] || cols[0]) === target[2];
+    if (isHit) matched = true;
+    btn.classList.toggle('active', isHit);
+  });
+  return matched;
+}
+
+function applyMetaToInspector(meta) {
+  if (!meta) return;
+  if (meta.color) setPrimaryColorUI(meta.color);
+  if (typeof meta.brightness === 'number') setZoneBrightnessUI(meta.brightness);
+
+  const isMouse = state.activeView === 'mouse';
+  const isRear = !isMouse && isRearLightbarSelected();
+  let eff = meta.effect || 'static';
+  if (eff === 'summer' || eff === 'waves') eff = 'static';
+  if (isRear && STD_TO_REAR_EFFECT[eff]) eff = STD_TO_REAR_EFFECT[eff];
+  if (!isRear && REAR_TO_STD_EFFECT[eff]) eff = REAR_TO_STD_EFFECT[eff];
+  if (isMouse && eff !== 'static' && eff !== 'morph') eff = 'static';
+  state.effect = eff;
+
+  if (typeof meta.speed === 'number') {
+    const spd = Math.max(1, Math.min(100, Math.round(meta.speed)));
+    state.speed = spd;
+    const spdEl = document.getElementById('effect-speed');
+    if (spdEl) spdEl.value = String(spd);
+  }
+
+  const col2 = normalizeHex(meta.color2);
+  if (col2) {
+    state.colorSecondary = col2;
+    const c2El = document.getElementById('color-secondary');
+    if (c2El) c2El.value = col2;
+  }
+
+  if (eff === 'aurora' || eff === 'aurora_bar') {
+    const c1 = normalizeHex(meta.color) || state.colorPrimary;
+    const c2Use = col2 || state.colorSecondary;
+    const c3Use = normalizeHex(meta.color3) || c1;
+    state.auroraColors = [c1, c2Use, c3Use];
+    syncAuroraPaletteActive(c1, c2Use, c3Use);
+  }
+
+  syncLightingControlsForView();
+  markApplyPending(false);
+}
+
+function loadSelectionColorAndBrightness() {
+  if (state.selectedHwLights.size > 0) {
+    for (const lid of state.selectedHwLights) {
       const meta = state.hwLightMeta.get(lid);
       if (meta && meta.color) {
-        setPrimaryColorUI(meta.color);
-        setZoneBrightnessUI(meta.brightness ?? 100);
+        applyMetaToInspector(meta);
         return;
       }
     }
+    syncLightingControlsForView();
     return;
   }
 
-  if (state.selectedTargets.size === 0) return;
-  const candidates = [];
-  if (preferredTargetId !== null && preferredTargetId !== undefined) {
-    const prefStr = String(preferredTargetId);
-    if (state.selectedTargets.has(prefStr)) candidates.push(prefStr);
+  if (state.selectedTargets.size === 0) {
+    syncLightingControlsForView();
+    return;
   }
-  state.selectedTargets.forEach((t) => {
-    if (!candidates.includes(t)) candidates.push(t);
-  });
 
-  for (const t of candidates) {
+  for (const t of state.selectedTargets) {
     if (t === 'touchpad' || t === 'power') {
+      const meta = state.zoneMeta[t] || state.keyMeta[t];
+      if (meta && meta.color) {
+        applyMetaToInspector(meta);
+        return;
+      }
       const col = state.zoneBaseColors[t] || state.keyBaseColors[t];
       if (col) {
-        const bright = state.zoneBrightnessMap[t] ?? state.keyBrightness[t] ?? 100;
-        setPrimaryColorUI(col);
-        setZoneBrightnessUI(bright);
+        applyMetaToInspector({ color: col, brightness: state.zoneBrightnessMap[t] ?? state.keyBrightness[t] ?? 100 });
         return;
       }
     } else if (state.activeView === 'keyboard' && KEY_BY_ID.has(t)) {
+      const meta = state.keyMeta[t];
+      if (meta && meta.color) {
+        applyMetaToInspector(meta);
+        return;
+      }
       const col = state.keyBaseColors[t];
       if (col) {
-        setPrimaryColorUI(col);
-        setZoneBrightnessUI(state.keyBrightness[t] ?? 100);
+        applyMetaToInspector({ color: col, brightness: state.keyBrightness[t] ?? 100 });
         return;
       }
     } else {
       const zKey = getZoneMetaKey(state.activeView, t);
+      const meta = state.zoneMeta[zKey];
+      if (meta && meta.color) {
+        applyMetaToInspector(meta);
+        return;
+      }
       const col = state.zoneBaseColors[zKey];
       if (col) {
-        setPrimaryColorUI(col);
-        setZoneBrightnessUI(state.zoneBrightnessMap[zKey] ?? 100);
+        applyMetaToInspector({ color: col, brightness: state.zoneBrightnessMap[zKey] ?? 100 });
         return;
       }
     }
   }
+  syncLightingControlsForView();
 }
 
 function updateWavesModeUI() {
@@ -499,6 +605,7 @@ function renderFavoriteColors() {
     sw.title = `${hex.toUpperCase()} — Click to apply, Right-click to remove`;
     sw.addEventListener('click', () => {
       setPrimaryColorUI(hex);
+      markDirtyIfSelected();
     });
     sw.addEventListener('contextmenu', (e) => {
       if (e && typeof e.preventDefault === 'function') e.preventDefault();
@@ -682,9 +789,16 @@ function toggleTargetSelection(id) {
   else state.selectedTargets.delete(key);
   refreshSelectionUI();
   if (added) {
-    loadSelectionColorAndBrightness(key);
+    if (state.selectedTargets.size === 1) {
+      loadSelectionColorAndBrightness();
+    } else {
+      syncLightingControlsForView();
+    }
   } else if (state.selectedTargets.size > 0) {
     loadSelectionColorAndBrightness();
+  } else {
+    markApplyPending(false);
+    syncLightingControlsForView();
   }
 }
 
@@ -790,6 +904,7 @@ function initNavigation() {
       updateProbeDeckUI();
       syncVirtualLightingFromState();
       syncInspectorFromView();
+      markApplyPending(false);
       syncLightingControlsForView();
     });
   });
@@ -837,6 +952,9 @@ function initNavigation() {
       refreshSelectionUI();
       if (state.selectedTargets.size > 0) {
         loadSelectionColorAndBrightness();
+      } else {
+        markApplyPending(false);
+        syncLightingControlsForView();
       }
     });
   });
@@ -856,6 +974,11 @@ function initNavigation() {
         if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
         state.selectedTargets.add(zone.dataset.zoneId);
         refreshSelectionUI();
+        if (state.selectedTargets.size === 1) {
+          loadSelectionColorAndBrightness();
+        } else {
+          syncLightingControlsForView();
+        }
       });
       zone.addEventListener('mouseenter', (e) => {
         if (!isChassisDragging || !(e.buttons & 1)) return;
@@ -898,7 +1021,12 @@ function initNavigation() {
       refreshSelectionUI();
       const lbl = document.getElementById('chassis-zone-label');
       if (lbl) lbl.textContent = labelText;
-      if (state.selectedTargets.size > 0) loadSelectionColorAndBrightness();
+      if (state.selectedTargets.size > 0) {
+        loadSelectionColorAndBrightness();
+      } else {
+        markApplyPending(false);
+        syncLightingControlsForView();
+      }
     });
   };
   bindChassisQuick('chassis-sel-rear', '#rear-lightbar-strip .chassis-zone', 'Selected: Rear Lightbar (#0 – #30)');
@@ -932,10 +1060,20 @@ function sendPowerButtonColor(colorHex) {
     });
   });
   const baseHex = normalizeHex(colorHex) || colorHex;
+  const pwrMeta = {
+    color: baseHex,
+    brightness: state.zoneBrightness,
+    effect: 'static',
+    speed: 50,
+    color2: baseHex,
+    color3: baseHex
+  };
   state.keyBaseColors.power = baseHex;
   state.keyBrightness.power = state.zoneBrightness;
+  state.keyMeta.power = { ...pwrMeta };
   state.zoneBaseColors.power = baseHex;
   state.zoneBrightnessMap.power = state.zoneBrightness;
+  state.zoneMeta.power = { ...pwrMeta };
   const visColor = scaleHexColor(colorHex, state.zoneBrightness);
   state.keyColors.power = visColor;
   const pwrKey = document.querySelector('.keycap[data-id="power"]');
@@ -947,21 +1085,47 @@ function sendPowerButtonColor(colorHex) {
 
 function syncLightingControlsForView() {
   const isMouse = state.activeView === 'mouse';
-  document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
-    const allowed = !isMouse || b.dataset.eff === 'static' || b.dataset.eff === 'morph';
-    b.style.display = allowed ? '' : 'none';
-  });
-  if (isMouse && state.effect !== 'static' && state.effect !== 'morph') {
+  const isRear = !isMouse && isRearLightbarSelected();
+
+  if (!isMouse) {
+    if (isRear && STD_TO_REAR_EFFECT[state.effect]) {
+      state.effect = STD_TO_REAR_EFFECT[state.effect];
+    } else if (!isRear && REAR_TO_STD_EFFECT[state.effect]) {
+      state.effect = REAR_TO_STD_EFFECT[state.effect];
+    }
+  } else if (state.effect !== 'static' && state.effect !== 'morph') {
     state.effect = 'static';
   }
+
   document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
-    b.classList.toggle('active', b.dataset.eff === state.effect);
+    const eff = b.dataset.eff;
+    let allowed = false;
+    if (eff === 'static') {
+      allowed = true;
+    } else if (isMouse) {
+      allowed = eff === 'morph';
+    } else if (isRear) {
+      allowed = b.classList.contains('eff-rear');
+    } else {
+      allowed = b.classList.contains('eff-std');
+    }
+    b.style.display = allowed ? '' : 'none';
   });
-  const showSec = isMouse || ['morph', 'aurora', 'breathing'].includes(state.effect);
+
+  const activeBtn = document.querySelector(`#effect-grid .eff-btn[data-eff="${state.effect}"]`);
+  if (!activeBtn || activeBtn.style.display === 'none') {
+    state.effect = 'static';
+  }
+
+  document.querySelectorAll('#effect-grid .eff-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.eff === state.effect && b.style.display !== 'none');
+  });
+
+  const showSec = isMouse || ['morph', 'aurora', 'breathing', 'syncmorph', 'syncbreath', 'aurora_bar'].includes(state.effect);
   const secWrap = document.getElementById('secondary-color-wrap');
   if (secWrap) secWrap.style.display = showSec ? 'flex' : 'none';
   const auroraWrap = document.getElementById('aurora-palette-wrap');
-  if (auroraWrap) auroraWrap.style.display = (!isMouse && state.effect === 'aurora') ? 'flex' : 'none';
+  if (auroraWrap) auroraWrap.style.display = (!isMouse && (state.effect === 'aurora' || state.effect === 'aurora_bar')) ? 'flex' : 'none';
 }
 
 function initLightingControls() {
@@ -974,29 +1138,34 @@ function initLightingControls() {
   cPrimary.addEventListener('input', () => {
     state.colorPrimary = cPrimary.value;
     hPrimary.value = cPrimary.value.toUpperCase();
+    markDirtyIfSelected();
   });
 
   hPrimary.addEventListener('change', () => {
     if (/^#[0-9a-fA-F]{6}$/.test(hPrimary.value)) {
       state.colorPrimary = hPrimary.value.toLowerCase();
       cPrimary.value = hPrimary.value.toLowerCase();
+      markDirtyIfSelected();
     }
   });
 
   cSecondary.addEventListener('input', () => {
     state.colorSecondary = cSecondary.value;
+    markDirtyIfSelected();
   });
 
   if (zBright && zBrightVal) {
     zBright.addEventListener('input', () => {
       state.zoneBrightness = Math.max(5, Math.min(100, parseInt(zBright.value, 10) || 100));
       zBrightVal.textContent = `${state.zoneBrightness}%`;
+      markDirtyIfSelected();
     });
   }
 
   document.querySelectorAll('.swatch').forEach((sw) => {
     sw.addEventListener('click', () => {
       setPrimaryColorUI(sw.dataset.color);
+      markDirtyIfSelected();
     });
   });
 
@@ -1052,11 +1221,13 @@ function initLightingControls() {
 
   document.querySelectorAll('.eff-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (btn.style.display === 'none') return;
       if (state.activeView === 'mouse' && btn.dataset.eff !== 'static' && btn.dataset.eff !== 'morph') {
         return;
       }
       state.effect = btn.dataset.eff;
       syncLightingControlsForView();
+      markDirtyIfSelected();
     });
   });
 
@@ -1070,12 +1241,14 @@ function initLightingControls() {
         setPrimaryColorUI(cols[0]);
         state.colorSecondary = cols[1];
         document.getElementById('color-secondary').value = cols[1];
+        markDirtyIfSelected();
       }
     });
   });
 
   document.getElementById('effect-speed').addEventListener('input', (e) => {
     state.speed = parseInt(e.target.value, 10);
+    markDirtyIfSelected();
   });
 
   document.getElementById('btn-apply-lighting').addEventListener('click', () => {
@@ -1092,13 +1265,23 @@ function initLightingControls() {
     }
 
     const baseColor = normalizeHex(state.colorPrimary) || state.colorPrimary;
+    const color2Norm = normalizeHex(state.colorSecondary) || state.colorSecondary;
+    const color3Norm = normalizeHex(state.auroraColors[2]) || baseColor;
     const commonPayload = {
       color: baseColor,
-      color2: state.colorSecondary,
-      color3: state.auroraColors[2] || baseColor,
+      color2: color2Norm,
+      color3: color3Norm,
       effect: state.effect,
       speed: state.speed,
       zoneBrightness: state.zoneBrightness
+    };
+    const metaObj = {
+      color: baseColor,
+      brightness: state.zoneBrightness,
+      effect: state.effect,
+      speed: state.speed,
+      color2: color2Norm,
+      color3: color3Norm
     };
     const visColor = scaleHexColor(baseColor, state.zoneBrightness);
 
@@ -1107,7 +1290,7 @@ function initLightingControls() {
       const dev = state.devices.find((d) => d.pid === state.selectedDevicePid) || state.devices[0];
       if (!dev) return;
       hwTargets.forEach((lid) => {
-        state.hwLightMeta.set(lid, { color: baseColor, brightness: state.zoneBrightness });
+        state.hwLightMeta.set(lid, { ...metaObj });
       });
       sendCommand({
         cmd: 'applyZoneColor',
@@ -1116,23 +1299,27 @@ function initLightingControls() {
         zoneName: `LEDs ${hwTargets.slice(0, 4).map((x) => `#${x}`).join(',')}`,
         ...commonPayload
       });
+      markApplyPending(false);
       return;
     }
 
     const hasPower = uiTargets.includes('power');
+    let appliedPower = false;
     if (hasPower) {
-      sendPowerButtonColor(baseColor);
+      appliedPower = sendPowerButtonColor(baseColor);
     }
 
     if (state.activeView === 'keyboard') {
       const hasTouchpad = uiTargets.includes('touchpad');
       const keyTargets = uiTargets.filter((id) => id !== 'touchpad' && id !== 'power');
+      let appliedTouchpad = false;
 
       if (hasTouchpad) {
         const tpLights = findTouchpadLights();
         if (tpLights.length > 0) {
           state.zoneBaseColors.touchpad = baseColor;
           state.zoneBrightnessMap.touchpad = state.zoneBrightness;
+          state.zoneMeta.touchpad = { ...metaObj };
           const tpEl = document.getElementById('rgb-touchpad');
           if (tpEl) applyTouchpadVisualStyle(tpEl, visColor);
           const byPid = new Map();
@@ -1149,16 +1336,23 @@ function initLightingControls() {
               ...commonPayload
             });
           });
+          appliedTouchpad = true;
         } else if (keyTargets.length === 0 && !hasPower) {
           document.getElementById('selected-names').textContent = 'No RGB Touchpad LED mapped yet — use Red LED Probe below & click "→ Touchpad"';
           return;
         }
       }
 
-      if (keyTargets.length === 0) return;
+      if (keyTargets.length === 0) {
+        if (appliedPower || appliedTouchpad) markApplyPending(false);
+        return;
+      }
 
       const kbdDev = getTargetDeviceForView('keyboard');
-      if (!kbdDev || !kbdDev.lights || kbdDev.lights.length === 0) return;
+      if (!kbdDev || !kbdDev.lights || kbdDev.lights.length === 0) {
+        if (appliedPower || appliedTouchpad) markApplyPending(false);
+        return;
+      }
 
       const matched = [];
       keyTargets.forEach((id) => {
@@ -1168,6 +1362,7 @@ function initLightingControls() {
           if (lids.length > 0 || !isPerKeyKeyboard(kbdDev)) {
             state.keyBaseColors[id] = baseColor;
             state.keyBrightness[id] = state.zoneBrightness;
+            state.keyMeta[id] = { ...metaObj };
             state.keyColors[id] = visColor;
             const keyEl = document.querySelector(`.keycap[data-id="${id}"]`);
             if (keyEl) applyKeyVisualStyle(keyEl, visColor, state.effect);
@@ -1195,17 +1390,22 @@ function initLightingControls() {
         zoneName: keyTargets.length > 4 ? `Keys (${keyTargets.length})` : `Keys ${labelPreview}`,
         ...commonPayload
       });
+      markApplyPending(false);
       return;
     }
 
     // Mouse or Chassis views (non-power zones)
     const zoneTargets = uiTargets.filter((zid) => zid !== 'power');
-    if (zoneTargets.length === 0) return;
+    if (zoneTargets.length === 0) {
+      if (appliedPower) markApplyPending(false);
+      return;
+    }
 
     const viewDev = getTargetDeviceForView(state.activeView);
     if (!viewDev || !viewDev.lights || viewDev.lights.length === 0) {
       const labelEl = document.getElementById(state.activeView === 'mouse' ? 'mouse-zone-label' : 'chassis-zone-label');
       if (labelEl) labelEl.textContent = `No compatible ${state.activeView} device detected`;
+      if (appliedPower) markApplyPending(false);
       return;
     }
 
@@ -1218,12 +1418,16 @@ function initLightingControls() {
         const zKey = getZoneMetaKey(state.activeView, zid);
         state.zoneBaseColors[zKey] = baseColor;
         state.zoneBrightnessMap[zKey] = state.zoneBrightness;
+        state.zoneMeta[zKey] = { ...metaObj };
         applySvgZoneVisualStyle(zEl, visColor);
         matched.push(...lids);
       }
     });
     const resolvedIds = Array.from(new Set(matched));
-    if (resolvedIds.length === 0) return;
+    if (resolvedIds.length === 0) {
+      if (appliedPower) markApplyPending(false);
+      return;
+    }
 
     sendCommand({
       cmd: 'applyZoneColor',
@@ -1232,6 +1436,7 @@ function initLightingControls() {
       zoneName: `${state.activeView.toUpperCase()} Zone`,
       ...commonPayload
     });
+    markApplyPending(false);
   });
 
   // Master controls
@@ -1745,43 +1950,56 @@ function syncInspectorFromView() {
   if (!chosenLs) return;
 
   const col1 = normalizeHex(chosenLs.color) || '#00f0ff';
-  const col2 = chosenLs.color2 || state.colorSecondary || '#7b2cbf';
-  const eff = chosenLs.effect || 'static';
+  const col2 = normalizeHex(chosenLs.color2) || state.colorSecondary || '#7b2cbf';
+  const col3 = normalizeHex(chosenLs.color3) || col1;
+  let eff = chosenLs.effect || 'static';
+  if (eff === 'summer' || eff === 'waves') eff = 'static';
+  const isMouse = state.activeView === 'mouse';
+  const isRear = !isMouse && isRearLightbarSelected();
+  if (isRear && STD_TO_REAR_EFFECT[eff]) eff = STD_TO_REAR_EFFECT[eff];
+  if (!isRear && REAR_TO_STD_EFFECT[eff]) eff = REAR_TO_STD_EFFECT[eff];
+  if (isMouse && eff !== 'static' && eff !== 'morph') eff = 'static';
   const spd = typeof chosenLs.speed === 'number' ? Math.max(1, Math.min(100, chosenLs.speed)) : state.speed;
   const bright = typeof chosenLs.brightness === 'number' ? Math.max(5, Math.min(100, Math.round(chosenLs.brightness))) : 100;
 
   setPrimaryColorUI(col1);
   setZoneBrightnessUI(bright);
   state.colorSecondary = col2;
-  state.effect = (eff === 'summer' || eff === 'waves') ? 'static' : eff;
+  state.effect = eff;
   state.speed = spd;
-  if (state.effect === 'aurora') {
-    state.auroraColors = [col1, col2, chosenLs.color3 || col1];
+  if (state.effect === 'aurora' || state.effect === 'aurora_bar') {
+    state.auroraColors = [col1, col2, col3];
+    syncAuroraPaletteActive(col1, col2, col3);
   }
 
   document.getElementById('color-secondary').value = col2;
   document.getElementById('effect-speed').value = spd;
   syncLightingControlsForView();
+  markApplyPending(false);
 }
 
 function syncVirtualLightingFromState() {
   const activeProf = state.profiles.find((p) => p.active) || state.profiles[0];
   const lightsOn = state.settings.lightsOn !== false;
 
-  // Build exact (pid, lid) -> unscaled base color, brightness & scaled color lookup from active profile lightsets
+  // Build exact (pid, lid) -> full lighting metadata & scaled color lookup from active profile lightsets
   const litBaseColorMap = new Map();
   const litBrightMap = new Map();
   const litColorMap = new Map();
   const litEffectMap = new Map();
+  const litMetaMap = new Map();
   const deviceFallbackBase = new Map();
   const deviceFallbackBright = new Map();
   const deviceFallbackColor = new Map();
+  const deviceFallbackMeta = new Map();
   const powerKeySet = new Set(findPowerButtonLights().map((p) => `${p.pid}:${p.lid}`));
 
   state.keyBaseColors = {};
   state.keyBrightness = {};
+  state.keyMeta = {};
   state.zoneBaseColors = {};
   state.zoneBrightnessMap = {};
+  state.zoneMeta = {};
   state.hwLightMeta.clear();
 
   if (activeProf && Array.isArray(activeProf.lightsets)) {
@@ -1790,20 +2008,26 @@ function syncVirtualLightingFromState() {
       const bright = typeof ls.brightness === 'number' ? Math.max(5, Math.min(100, Math.round(ls.brightness))) : 100;
       const visCol = scaleHexColor(baseCol, bright);
       const eff = ls.effect || 'static';
+      const spd = typeof ls.speed === 'number' ? Math.max(1, Math.min(100, Math.round(ls.speed))) : 50;
+      const col2 = normalizeHex(ls.color2) || '#7b2cbf';
+      const col3 = normalizeHex(ls.color3) || baseCol;
+      const metaObj = { color: baseCol, brightness: bright, effect: eff, speed: spd, color2: col2, color3: col3 };
       (ls.lights || []).forEach((gl) => {
         const key = `${gl.did}:${gl.lid}`;
         litBaseColorMap.set(key, baseCol);
         litBrightMap.set(key, bright);
+        litMetaMap.set(key, metaObj);
         if (lightsOn) {
           litColorMap.set(key, visCol);
           litEffectMap.set(key, eff);
         }
         if (gl.did === state.selectedDevicePid) {
-          state.hwLightMeta.set(gl.lid, { color: baseCol, brightness: bright });
+          state.hwLightMeta.set(gl.lid, { ...metaObj });
         }
         if (!powerKeySet.has(key) && !deviceFallbackBase.has(gl.did)) {
           deviceFallbackBase.set(gl.did, baseCol);
           deviceFallbackBright.set(gl.did, bright);
+          deviceFallbackMeta.set(gl.did, metaObj);
           if (lightsOn) deviceFallbackColor.set(gl.did, visCol);
         }
       });
@@ -1816,6 +2040,7 @@ function syncVirtualLightingFromState() {
   const kbdFallback = kbdDev ? deviceFallbackColor.get(kbdDev.pid) : null;
   const kbdFallbackBase = kbdDev ? deviceFallbackBase.get(kbdDev.pid) : null;
   const kbdFallbackBright = kbdDev ? (deviceFallbackBright.get(kbdDev.pid) ?? 100) : 100;
+  const kbdFallbackMeta = kbdDev ? deviceFallbackMeta.get(kbdDev.pid) : null;
   const pwrLights = findPowerButtonLights();
 
   document.querySelectorAll('.keycap[data-id]').forEach((keyEl) => {
@@ -1824,12 +2049,14 @@ function syncVirtualLightingFromState() {
     let baseCol = null;
     let bright = 100;
     let eff = '';
+    let foundMeta = null;
     if (keyId === 'power') {
       for (const pl of pwrLights) {
         const k = `${pl.pid}:${pl.lid}`;
         if (litBaseColorMap.has(k) && !baseCol) {
           baseCol = litBaseColorMap.get(k);
           bright = litBrightMap.get(k) ?? 100;
+          foundMeta = litMetaMap.get(k) || null;
         }
         const hit = litColorMap.get(k);
         if (hit && !col) { col = hit; eff = litEffectMap.get(k) || ''; break; }
@@ -1843,6 +2070,7 @@ function syncVirtualLightingFromState() {
           if (litBaseColorMap.has(k) && !baseCol) {
             baseCol = litBaseColorMap.get(k);
             bright = litBrightMap.get(k) ?? 100;
+            foundMeta = litMetaMap.get(k) || null;
           }
           const hit = litColorMap.get(k);
           if (hit) {
@@ -1854,6 +2082,7 @@ function syncVirtualLightingFromState() {
         if (!baseCol && !kbdPerKey && kbdFallbackBase) {
           baseCol = kbdFallbackBase;
           bright = kbdFallbackBright;
+          foundMeta = kbdFallbackMeta;
         }
         if (!col && !kbdPerKey && kbdFallback) {
           col = kbdFallback;
@@ -1863,10 +2092,12 @@ function syncVirtualLightingFromState() {
     if (baseCol) {
       state.keyBaseColors[keyId] = baseCol;
       state.keyBrightness[keyId] = bright;
+      state.keyMeta[keyId] = foundMeta ? { ...foundMeta } : { color: baseCol, brightness: bright, effect: 'static', speed: 50, color2: state.colorSecondary, color3: baseCol };
     }
     if (keyId === 'power' && baseCol) {
       state.zoneBaseColors.power = baseCol;
       state.zoneBrightnessMap.power = bright;
+      state.zoneMeta.power = { ...(state.keyMeta.power), effect: 'static' };
     }
     if (col) {
       state.keyColors[keyId] = col;
@@ -1877,6 +2108,18 @@ function syncVirtualLightingFromState() {
     }
   });
 
+  // Sync touchpad metadata if mapped
+  const tpLights = findTouchpadLights();
+  for (const tp of tpLights) {
+    const tpMeta = litMetaMap.get(`${tp.pid}:${tp.lid}`);
+    if (tpMeta) {
+      state.zoneBaseColors.touchpad = tpMeta.color;
+      state.zoneBrightnessMap.touchpad = tpMeta.brightness;
+      state.zoneMeta.touchpad = { ...tpMeta };
+      break;
+    }
+  }
+
   // 2. Sync Mouse zones
   const mouseDev = getTargetDeviceForView('mouse');
   const mouseSingleZone = mouseDev && (mouseDev.lights || []).filter((l) => (l.flags & 1) === 0).length <= 1;
@@ -1885,6 +2128,7 @@ function syncVirtualLightingFromState() {
     let col = null;
     let baseCol = null;
     let bright = 100;
+    let foundMeta = null;
     if (mouseDev) {
       const lids = findLightsForZone(zid, zoneEl.dataset.zoneName, mouseDev);
       for (const lid of lids) {
@@ -1892,6 +2136,7 @@ function syncVirtualLightingFromState() {
         if (litBaseColorMap.has(k) && !baseCol) {
           baseCol = litBaseColorMap.get(k);
           bright = litBrightMap.get(k) ?? 100;
+          foundMeta = litMetaMap.get(k) || null;
         }
         const hit = litColorMap.get(k);
         if (hit && !col) col = hit;
@@ -1899,6 +2144,7 @@ function syncVirtualLightingFromState() {
       if (!baseCol && mouseSingleZone) {
         baseCol = deviceFallbackBase.get(mouseDev.pid) || null;
         bright = deviceFallbackBright.get(mouseDev.pid) ?? 100;
+        foundMeta = deviceFallbackMeta.get(mouseDev.pid) || null;
       }
       if (!col && mouseSingleZone) col = deviceFallbackColor.get(mouseDev.pid) || null;
     }
@@ -1906,6 +2152,7 @@ function syncVirtualLightingFromState() {
       const zKey = getZoneMetaKey('mouse', zid);
       state.zoneBaseColors[zKey] = baseCol;
       state.zoneBrightnessMap[zKey] = bright;
+      state.zoneMeta[zKey] = foundMeta ? { ...foundMeta } : { color: baseCol, brightness: bright, effect: 'static', speed: 50, color2: state.colorSecondary, color3: baseCol };
     }
     applySvgZoneVisualStyle(zoneEl, col);
   });
@@ -1918,12 +2165,14 @@ function syncVirtualLightingFromState() {
     let col = null;
     let baseCol = null;
     let bright = 100;
+    let foundMeta = null;
     if (zid === 'power') {
       for (const pl of pwrLights) {
         const k = `${pl.pid}:${pl.lid}`;
         if (litBaseColorMap.has(k) && !baseCol) {
           baseCol = litBaseColorMap.get(k);
           bright = litBrightMap.get(k) ?? 100;
+          foundMeta = litMetaMap.get(k) || null;
         }
         const hit = litColorMap.get(k);
         if (hit && !col) col = hit;
@@ -1935,6 +2184,7 @@ function syncVirtualLightingFromState() {
         if (litBaseColorMap.has(k) && !baseCol) {
           baseCol = litBaseColorMap.get(k);
           bright = litBrightMap.get(k) ?? 100;
+          foundMeta = litMetaMap.get(k) || null;
         }
         const hit = litColorMap.get(k);
         if (hit && !col) col = hit;
@@ -1942,6 +2192,7 @@ function syncVirtualLightingFromState() {
       if (!baseCol && chassisSingleZone) {
         baseCol = deviceFallbackBase.get(chassisDev.pid) || null;
         bright = deviceFallbackBright.get(chassisDev.pid) ?? 100;
+        foundMeta = deviceFallbackMeta.get(chassisDev.pid) || null;
       }
       if (!col && chassisSingleZone) col = deviceFallbackColor.get(chassisDev.pid) || null;
     }
@@ -1949,6 +2200,9 @@ function syncVirtualLightingFromState() {
       const zKey = getZoneMetaKey('chassis', zid);
       state.zoneBaseColors[zKey] = baseCol;
       state.zoneBrightnessMap[zKey] = bright;
+      state.zoneMeta[zKey] = foundMeta
+        ? (zid === 'power' ? { ...foundMeta, effect: 'static' } : { ...foundMeta })
+        : { color: baseCol, brightness: bright, effect: 'static', speed: 50, color2: state.colorSecondary, color3: baseCol };
     }
     applySvgZoneVisualStyle(zoneEl, col);
   });
@@ -2214,10 +2468,6 @@ function applyFullState(data) {
     const wb = data.settings.wavesBrightness ?? 100;
     if (wavesBrightEl) wavesBrightEl.value = String(wb);
     if (wavesBrightValEl) wavesBrightValEl.textContent = `${wb}%`;
-    const tpAlwaysEl = document.getElementById('set-touchpad-always-on');
-    if (tpAlwaysEl) tpAlwaysEl.checked = !!data.settings.touchpadAlwaysOn;
-    const tpTimeoutEl = document.getElementById('set-touchpad-timeout');
-    if (tpTimeoutEl) tpTimeoutEl.value = String(data.settings.touchpadTimeout ?? 10);
     document.getElementById('set-prof-switch').checked = !!data.settings.enableProfSwitch;
     document.getElementById('set-gamma').checked = !!data.settings.gammaCorrection;
     document.getElementById('set-fan-control').checked = !!data.settings.fanControl;
@@ -2305,6 +2555,7 @@ function applyFullState(data) {
   if (activePreset) {
     document.getElementById('hud-profile').textContent = `Preset: ${activePreset}`;
   }
+  markApplyPending(false);
   syncLightingControlsForView();
 }
 
@@ -2337,8 +2588,18 @@ function renderHardwareLights() {
       if (added) state.selectedHwLights.add(l.id);
       else state.selectedHwLights.delete(l.id);
       refreshSelectionUI();
-      if (added) loadSelectionColorAndBrightness(l.id);
-      else if (state.selectedHwLights.size > 0) loadSelectionColorAndBrightness();
+      if (added) {
+        if (state.selectedHwLights.size === 1) {
+          loadSelectionColorAndBrightness();
+        } else {
+          syncLightingControlsForView();
+        }
+      } else if (state.selectedHwLights.size > 0) {
+        loadSelectionColorAndBrightness();
+      } else {
+        markApplyPending(false);
+        syncLightingControlsForView();
+      }
     });
     row.querySelector('.hw-blink-btn').addEventListener('click', () => {
       sendCommand({ cmd: 'blinkLight', pid: dev.pid, lightId: l.id });
@@ -2416,6 +2677,7 @@ function initMiscActions() {
     renderHardwareLights();
     refreshSelectionUI();
     updateProbeDeckUI();
+    markApplyPending(false);
     if (state.probeActive) sendProbeLed();
   });
 
@@ -2538,6 +2800,7 @@ function initMiscActions() {
       document.getElementById('color-secondary').value = p.color2;
       document.getElementById('effect-speed').value = p.speed;
       syncLightingControlsForView();
+      markApplyPending(false);
 
       sendCommand({
         cmd: 'applyGamePreset',
@@ -2632,23 +2895,12 @@ function initMiscActions() {
     });
   }
 
-  const tpTimeoutEl = document.getElementById('set-touchpad-timeout');
-  if (tpTimeoutEl) {
-    tpTimeoutEl.addEventListener('change', (e) => {
-      const sec = Math.max(1, Math.min(300, parseInt(e.target.value, 10) || 10));
-      e.target.value = String(sec);
-      state.settings.touchpadTimeout = sec;
-      sendCommand({ cmd: 'setSettings', touchpadTimeout: sec });
-    });
-  }
-
   const settingMap = {
     'set-start-windows': 'startWindows',
     'set-start-minimized': 'startMinimized',
     'set-always-admin': 'alwaysAdmin',
     'set-startup-intro': 'startupIntro',
     'set-low-batt-alert': 'lowBatteryAlert',
-    'set-touchpad-always-on': 'touchpadAlwaysOn',
     'set-prof-switch': 'enableProfSwitch',
     'set-gamma': 'gammaCorrection',
     'set-fan-control': 'fanControl',

@@ -30,7 +30,13 @@ extern EventHandler* eve;
 extern MonHelper* mon;
 extern ConfigFan* fan_conf;
 
-constexpr byte EFFECT_SUMMER = 7;
+constexpr byte EFFECT_SUMMER        = 7;
+constexpr byte EFFECT_REAR_SCANNER  = 8;
+constexpr byte EFFECT_REAR_COMET    = 9;
+constexpr byte EFFECT_REAR_CONVERGE = 10;
+constexpr byte EFFECT_REAR_BREATH   = 11;
+constexpr byte EFFECT_REAR_MORPH    = 12;
+constexpr byte EFFECT_REAR_AURORA   = 13;
 
 static unsigned g_prePresetProfileId = 0;
 static std::string g_activePresetName;
@@ -41,7 +47,7 @@ static int g_activeIntroStyle = 0;
 static ULONGLONG g_introStartMs = 0;
 static bool g_lowBattPreviewActive = false;
 static ULONGLONG g_lowBattPreviewStartMs = 0;
-static ULONGLONG g_lastTouchpadActivityMs = 0;
+static ULONGLONG g_rearAnimEpochMs = 0;
 
 struct WaterDrop {
     double x;
@@ -135,6 +141,12 @@ static byte EffectNameToType(const std::string& eff) {
     if (eff == "spectrum") return AlienFX_SDK::AlienFX_A_Spectrum;
     if (eff == "rainbow" || eff == "wave" || eff == "aurora") return AlienFX_SDK::AlienFX_A_Rainbow;
     if (eff == "waves" || eff == "summer") return EFFECT_SUMMER;
+    if (eff == "scanner") return EFFECT_REAR_SCANNER;
+    if (eff == "comet") return EFFECT_REAR_COMET;
+    if (eff == "converge") return EFFECT_REAR_CONVERGE;
+    if (eff == "syncbreath") return EFFECT_REAR_BREATH;
+    if (eff == "syncmorph") return EFFECT_REAR_MORPH;
+    if (eff == "aurora_bar") return EFFECT_REAR_AURORA;
     return AlienFX_SDK::AlienFX_A_Color;
 }
 
@@ -146,6 +158,12 @@ static std::string EffectTypeToName(byte t, size_t colorCount = 1) {
     case AlienFX_SDK::AlienFX_A_Spectrum: return "spectrum";
     case AlienFX_SDK::AlienFX_A_Rainbow: return (colorCount >= 3) ? "aurora" : "wave";
     case EFFECT_SUMMER: return "waves";
+    case EFFECT_REAR_SCANNER: return "scanner";
+    case EFFECT_REAR_COMET: return "comet";
+    case EFFECT_REAR_CONVERGE: return "converge";
+    case EFFECT_REAR_BREATH: return "syncbreath";
+    case EFFECT_REAR_MORPH: return "syncmorph";
+    case EFFECT_REAR_AURORA: return "aurora_bar";
     default: return "static";
     }
 }
@@ -803,7 +821,9 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             act1.time = 5;
             targetSet->color.push_back(act1);
 
-            if (eff == "morph" || eff == "breathing" || eff == "pulse" || eff == "aurora") {
+            if (eff == "morph" || eff == "breathing" || eff == "pulse" || eff == "aurora" ||
+                eff == "scanner" || eff == "comet" || eff == "converge" ||
+                eff == "syncbreath" || eff == "syncmorph" || eff == "aurora_bar") {
                 AlienFX_SDK::Afx_action act2{};
                 act2.type = act1.type;
                 act2.r = r2; act2.g = g2; act2.b = b2;
@@ -811,7 +831,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 act2.time = 5;
                 targetSet->color.push_back(act2);
             }
-            if (eff == "aurora") {
+            if (eff == "aurora" || eff == "aurora_bar") {
                 std::string hex3 = msg.get("color3").asString("#7b2cbf");
                 byte r3 = 123, g3 = 44, b3 = 191;
                 HexToRgb(hex3, r3, g3, b3);
@@ -822,10 +842,13 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 act3.time = 5;
                 targetSet->color.push_back(act3);
             }
+            if (act1.type >= EFFECT_REAR_SCANNER) {
+                g_rearAnimEpochMs = GetTickCount64();
+            }
 
             conf->modifyProfile.unlockWrite();
 
-            g_lastTouchpadActivityMs = GetTickCount64();
+            g_forceFullSoftwareFrame = true;
             fxhl->deferV5Refresh = true;
             fxhl->ClearAndRefresh(true);
             fxhl->deferV5Refresh = false;
@@ -1524,14 +1547,6 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             conf->wavesColor = (static_cast<DWORD>(r) << 16) | (static_cast<DWORD>(g) << 8) | static_cast<DWORD>(b);
         }
         if (msg.has("wavesBrightness")) conf->wavesBrightness = static_cast<DWORD>(std::clamp(msg.get("wavesBrightness").asInt(100), 10, 100));
-        if (msg.has("touchpadAlwaysOn")) {
-            conf->touchpadAlwaysOn = msg.get("touchpadAlwaysOn").asBool(false) ? 1 : 0;
-            g_lastTouchpadActivityMs = GetTickCount64();
-        }
-        if (msg.has("touchpadTimeout")) {
-            conf->touchpadTimeout = static_cast<DWORD>(std::clamp(msg.get("touchpadTimeout").asInt(10), 1, 300));
-            g_lastTouchpadActivityMs = GetTickCount64();
-        }
         if (msg.has("lowBatteryAlert")) conf->lowBatteryAlert = msg.get("lowBatteryAlert").asBool(true) ? 1 : 0;
         if (msg.has("gammaCorrection")) conf->gammaCorrection = msg.get("gammaCorrection").asBool(true) ? 1 : 0;
         if (msg.has("enableProfSwitch")) conf->enableProfSwitch = msg.get("enableProfSwitch").asBool(true) ? 1 : 0;
@@ -2145,14 +2160,12 @@ void CockpitBridge::StepAnimatedEffects() {
     waveCrest.g = static_cast<byte>(std::lround(((conf->wavesColor >> 8) & 0xFF) * wbScale));
     waveCrest.b = static_cast<byte>(std::lround((conf->wavesColor & 0xFF) * wbScale));
 
-    static ULONGLONG s_lastTouchpadKeepAliveMs = 0;
     static ULONGLONG s_lastV4FrameMs = 0;
-    bool touchpadWindowActive = (conf->touchpadAlwaysOn != 0) ||
-        (conf->touchpadTimeout > 10 && g_lastTouchpadActivityMs != 0 &&
-         (nowMs - g_lastTouchpadActivityMs) < static_cast<ULONGLONG>(conf->touchpadTimeout) * 1000ULL);
-    bool touchpadKeepAliveTick = touchpadWindowActive && ((nowMs - s_lastTouchpadKeepAliveMs) >= 4000);
-    bool allowV4Frame = (nowMs - s_lastV4FrameMs) >= 85;
+    bool allowV4Frame = (nowMs - s_lastV4FrameMs) >= 34;
     bool v4FrameSent = false;
+    double rearElapsedSec = (g_rearAnimEpochMs > 0 && nowMs >= g_rearAnimEpochMs)
+        ? static_cast<double>(nowMs - g_rearAnimEpochMs) / 1000.0
+        : nowSec;
 
     bool anyUpdated = false;
     bool anyDevSkipped = false;
@@ -2165,7 +2178,7 @@ void CockpitBridge::StepAnimatedEffects() {
         if (ls.color.empty()) continue;
         byte effType = ls.color[0].type;
         bool isStaticLs = (effType == AlienFX_SDK::AlienFX_A_Color);
-        if (isStaticLs && !isFading && !needWavePass && !touchpadKeepAliveTick) continue;
+        if (isStaticLs && !isFading && !needWavePass) continue;
 
         AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(ls.group);
         if (!grp || grp->lights.empty()) continue;
@@ -2188,13 +2201,11 @@ void CockpitBridge::StepAnimatedEffects() {
                 dev->dev->version != AlienFX_SDK::API_ACPI) {
                 continue;
             }
-            bool isTouchpadLed = (isV4 && gl.lid >= 35 && gl.lid <= 44);
-            bool forceKeepAlive = (touchpadKeepAliveTick && isTouchpadLed);
             if (isV4) {
-                if (isStaticLs && !forceKeepAlive) {
+                if (isStaticLs) {
                     continue;
                 }
-                if (!isStaticLs && !allowV4Frame && !finalSettleFrame && !g_forceFullSoftwareFrame && !forceKeepAlive) {
+                if (!allowV4Frame && !finalSettleFrame && !g_forceFullSoftwareFrame) {
                     continue;
                 }
             } else if (isStaticLs && !isFading && !needWavePass) {
@@ -2217,7 +2228,7 @@ void CockpitBridge::StepAnimatedEffects() {
                     SetEvent(hEvt);
                 }
                 bool skipDev = isV4
-                    ? ((!finalSettleFrame && pending >= 1) || (qSize > 45))
+                    ? ((!finalSettleFrame && pending >= 1) || (qSize > 64))
                     : ((!finalSettleFrame && pending >= 2) || (qSize > 250));
                 if (skipDev) anyDevSkipped = true;
                 busyIt = devBusy.emplace(dev->pid, skipDev).first;
@@ -2232,11 +2243,59 @@ void CockpitBridge::StepAnimatedEffects() {
             } else {
                 GetDarfonKeyXY(static_cast<byte>(gl.lid), nx, ny);
             }
+            double barIdx = (isV4 && gl.lid <= 30) ? static_cast<double>(gl.lid) : (nx * 30.0);
 
             AlienFX_SDK::Afx_action frame{};
             frame.type = AlienFX_SDK::AlienFX_A_Color;
 
-            if (isAurora) {
+            if (effType == EFFECT_REAR_SCANNER) {
+                double scanCycles = 0.14 + std::pow(tNorm, 1.35) * 0.95;
+                double scanAngle = rearElapsedSec * scanCycles * 6.283185307179586;
+                double scanPos = 15.0 * (1.0 - std::cos(scanAngle));
+                double dist = std::fabs(barIdx - scanPos);
+                double w = std::exp(-(dist * dist) / (2.0 * 2.15 * 2.15));
+                if (w < 0.025) w = 0.0;
+                double k = (w > 0.0 && conf->gammaCorrection) ? std::pow(w, 0.65) : w;
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, c1, k);
+            } else if (effType == EFFECT_REAR_COMET) {
+                double cometSpeed = 0.22 + std::pow(tNorm, 1.35) * 1.35;
+                double head = std::fmod(rearElapsedSec * cometSpeed * 31.0, 31.0);
+                double tailDist = std::fmod(head - barIdx + 31.0, 31.0);
+                double ahead = std::fmod(barIdx - head + 31.0, 31.0);
+                double w = (ahead < 1.5) ? std::exp(-(ahead * ahead) / 0.45) : std::exp(-(tailDist * tailDist) / 14.0);
+                if (w < 0.025) w = 0.0;
+                double k = (w > 0.0 && conf->gammaCorrection) ? std::pow(w, 0.65) : w;
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, c1, k);
+            } else if (effType == EFFECT_REAR_CONVERGE) {
+                double convCycles = 0.16 + std::pow(tNorm, 1.35) * 1.0;
+                double radius = 15.0 * (0.5 - 0.5 * std::cos(rearElapsedSec * convCycles * 6.283185307179586));
+                double d = std::fabs(std::fabs(barIdx - 15.0) - radius);
+                double w = std::exp(-(d * d) / (2.0 * 1.9 * 1.9));
+                if (w < 0.025) w = 0.0;
+                double k = (w > 0.0 && conf->gammaCorrection) ? std::pow(w, 0.65) : w;
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, c1, k);
+            } else if (effType == EFFECT_REAR_BREATH) {
+                double bCycles = 0.12 + std::pow(tNorm, 1.45) * 0.75;
+                double k = 0.04 + 0.96 * (0.5 - 0.5 * std::cos(rearElapsedSec * bCycles * 6.283185307179586));
+                if (conf->gammaCorrection) k = std::pow(k, 0.75);
+                AlienFX_SDK::Afx_action dark{ 0 };
+                frame = LerpColor(dark, c1, k);
+            } else if (effType == EFFECT_REAR_MORPH) {
+                double mCycles = 0.10 + std::pow(tNorm, 1.45) * 0.70;
+                double k = 0.5 - 0.5 * std::cos(rearElapsedSec * mCycles * 6.283185307179586);
+                frame = LerpColor(c1, c2, k);
+            } else if (effType == EFFECT_REAR_AURORA) {
+                double aCycles = 0.10 + std::pow(tNorm, 1.45) * 0.65;
+                double aPhase = rearElapsedSec * aCycles * 6.283185307179586;
+                double tNormBar = barIdx / 30.0;
+                double w1 = 0.5 + 0.5 * std::sin(aPhase + tNormBar * 3.141592653589793);
+                double w2 = 0.5 + 0.5 * std::sin(aPhase * 0.7 - tNormBar * 2.4 + 1.5);
+                AlienFX_SDK::Afx_action mix12 = LerpColor(c1, c2, w1);
+                frame = LerpColor(mix12, c3, w2 * 0.65);
+            } else if (isAurora) {
                 double posCoord = nx * 2.2 + ny * 0.8;
                 double w1 = 0.5 + 0.5 * std::sin(angle + posCoord);
                 double w2 = 0.5 + 0.5 * std::sin(angle * 0.67 - nx * 1.7 + ny * 1.1 + 1.9);
@@ -2270,21 +2329,8 @@ void CockpitBridge::StepAnimatedEffects() {
                 double hue = std::fmod(nowSec * cyclesPerSec * 120.0, 360.0);
                 HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
             } else if (effType == AlienFX_SDK::AlienFX_A_Rainbow) {
-                if (isV4) {
-                    // Back-and-forth scanner beam across Rear Lightbar (#0..#30) and Touchpad (#35..#44)
-                    double scanPos = 0.5 - 0.5 * std::cos(angle * 0.85);
-                    double dist = std::fabs(nx - scanPos);
-                    double beam = std::exp(-(dist * dist) / 0.016);
-                    double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0, 360.0);
-                    AlienFX_SDK::Afx_action rainbowCol{};
-                    HsvToRgb(hue, 1.0, 1.0, rainbowCol.r, rainbowCol.g, rainbowCol.b);
-                    AlienFX_SDK::Afx_action beamCol = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1 : rainbowCol;
-                    AlienFX_SDK::Afx_action dimBg{ static_cast<byte>(beamCol.r / 14), static_cast<byte>(beamCol.g / 14), static_cast<byte>(beamCol.b / 14) };
-                    frame = LerpColor(dimBg, beamCol, beam);
-                } else {
-                    double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0 + ny * 35.0, 360.0);
-                    HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
-                }
+                double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0 + ny * 35.0, 360.0);
+                HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
             } else {
                 frame = c1;
                 frame.type = AlienFX_SDK::AlienFX_A_Color;
@@ -2303,13 +2349,9 @@ void CockpitBridge::StepAnimatedEffects() {
                 frame = LerpColor(prev, frame, fadeT);
             }
 
-            if (forceKeepAlive && isStaticLs) {
-                frame.b = (frame.b == 0) ? 1 : static_cast<byte>(frame.b ^ 1);
-            }
-
             updatedLights.insert(gl.lgh);
             auto lastIt = g_lastSentRgb.find(gl.lgh);
-            if (forceKeepAlive || finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
+            if (finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
                 g_lastSentRgb[gl.lgh] = frame;
                 std::vector<AlienFX_SDK::Afx_action> acts{ frame };
                 fxhl->SetLight(gl.lgh, &acts);
@@ -2320,7 +2362,6 @@ void CockpitBridge::StepAnimatedEffects() {
     }
     conf->modifyProfile.unlockRead();
 
-    if (touchpadKeepAliveTick) s_lastTouchpadKeepAliveMs = nowMs;
     if (v4FrameSent) s_lastV4FrameMs = nowMs;
 
     if (needWavePass || isFading) {

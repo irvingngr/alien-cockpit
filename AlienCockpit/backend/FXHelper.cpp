@@ -314,7 +314,8 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 	if (dev && dev->present && actions->size()) {
 		bool isPowerLight = (conf->afx_dev.GetFlags(dev, HIWORD(lgh)) & ALIENFX_FLAG_POWER) != 0;
 		if (deferV5Refresh && !isPowerLight && dev->dev &&
-			(dev->dev->version == AlienFX_SDK::API_V5 || dev->dev->version == AlienFX_SDK::API_ACPI)) {
+			(dev->dev->version == AlienFX_SDK::API_V5 || dev->dev->version == AlienFX_SDK::API_ACPI ||
+			 (dev->dev->version == AlienFX_SDK::API_V4 && dev->pid == 0x0551 && actions->front().type != AlienFX_SDK::AlienFX_A_Color))) {
 			return;
 		}
 		LightQueryElement newBlock{ (byte)HIWORD(lgh), 

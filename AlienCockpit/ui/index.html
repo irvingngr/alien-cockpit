@@ -102,7 +102,7 @@
         <div class="nav-footer">
           <div class="status-badge" id="backend-status">
             <span class="status-dot"></span>
-            <span id="backend-status-text">v1.0.13</span>
+            <span id="backend-status-text">v1.0.14</span>
           </div>
         </div>
       </nav>
@@ -308,16 +308,6 @@
                       <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="43" data-zone-name="Touchpad 9" title="#43 Touchpad 9"><span>43</span></button>
                       <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="44" data-zone-name="Touchpad 10" title="#44 Touchpad 10"><span>44</span></button>
                     </div>
-                    <div class="touchpad-behavior-bar">
-                      <label class="touchpad-opt-label" title="Periodically refresh Touchpad LEDs (#35–#44) so they stay lit instead of sleeping after 10s">
-                        <input type="checkbox" id="set-touchpad-always-on" />
-                        <span>Always On</span>
-                      </label>
-                      <label class="touchpad-opt-label" title="Seconds before Touchpad LEDs sleep when Always On is unchecked">
-                        <span>Stay Lit (sec):</span>
-                        <input type="number" id="set-touchpad-timeout" min="1" max="300" value="10" class="touchpad-sec-input" />
-                      </label>
-                    </div>
                   </div>
 
                   <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone (including Rear, Fans, Lid, Power Button, or Touchpad) to customize</div>
@@ -421,12 +411,18 @@
                 <div class="sec-title">LIGHTING EFFECT</div>
                 <div class="effect-grid" id="effect-grid">
                   <button class="eff-btn active" data-eff="static">Static</button>
-                  <button class="eff-btn" data-eff="breathing">Breathing</button>
-                  <button class="eff-btn" data-eff="pulse">Pulse</button>
-                  <button class="eff-btn" data-eff="morph">Morph</button>
-                  <button class="eff-btn" data-eff="spectrum">Spectrum</button>
-                  <button class="eff-btn" data-eff="wave">Wave</button>
-                  <button class="eff-btn eff-aurora" data-eff="aurora">✦ Aurora</button>
+                  <button class="eff-btn eff-std" data-eff="breathing">Breathing</button>
+                  <button class="eff-btn eff-std" data-eff="pulse">Pulse</button>
+                  <button class="eff-btn eff-std" data-eff="morph">Morph</button>
+                  <button class="eff-btn eff-std" data-eff="spectrum">Spectrum</button>
+                  <button class="eff-btn eff-std" data-eff="wave">Wave</button>
+                  <button class="eff-btn eff-std eff-aurora" data-eff="aurora">✦ Aurora</button>
+                  <button class="eff-btn eff-rear eff-aurora" data-eff="scanner" style="display:none;" title="Fluid back-and-forth beam (#0 to #30 and back)">✦ Scanner</button>
+                  <button class="eff-btn eff-rear" data-eff="comet" style="display:none;" title="Synchronized comet stream along Rear Lightbar">Comet</button>
+                  <button class="eff-btn eff-rear" data-eff="converge" style="display:none;" title="Symmetric pulse expanding from center #15">Center Pulse</button>
+                  <button class="eff-btn eff-rear" data-eff="syncbreath" style="display:none;" title="All bar LEDs breathe in tight unison">Sync Breath</button>
+                  <button class="eff-btn eff-rear" data-eff="syncmorph" style="display:none;" title="All bar LEDs morph between primary &amp; secondary in unison">Sync Morph</button>
+                  <button class="eff-btn eff-rear eff-aurora" data-eff="aurora_bar" style="display:none;" title="Smooth synchronized 3-color gradient across the bar">Aurora Sync</button>
                 </div>
 
                 <div class="secondary-color-row" id="secondary-color-wrap" style="display:none;">
@@ -681,7 +677,7 @@
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div class="about-info">
               <div class="about-title-row">
-                <h3>AlienCockpit v1.0.13 — AWCC Alternative</h3>
+                <h3>AlienCockpit v1.0.14 — AWCC Alternative</h3>
                 <span class="about-model-badge">Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)</span>
               </div>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
