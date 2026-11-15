@@ -4,7 +4,7 @@
 
 # AlienCockpit — AWCC Alternative
 
-**AlienCockpit** is an ultra-lightweight, low-resource command center for **Windows 11** built as a modern fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools). Unlike heavy vendor suites such as Alienware Command Center (AWCC), AlienCockpit consumes **minimal RAM and near-0% idle CPU** with **no bloated background telemetry or updater services**. It pairs the rock-solid hardware stability of the open-source `AlienFX-SDK` and `AlienFan-SDK` C++ engines with a crisp PerMonitorV2 WebView2 interface.
+**AlienCockpit** is an ultra-lightweight, low-resource command center for **Windows 11** built as a modern fork of [`alien-tools`](https://github.com/T-Troll/alien-tools). Unlike heavy vendor suites such as Alienware Command Center (AWCC), AlienCockpit consumes **minimal RAM and near-0% idle CPU** with **no bloated background telemetry or updater services**. It pairs the rock-solid hardware stability of the open-source `AlienTOOLS-SDK` and `AlienFan-SDK` C++ engines with a crisp PerMonitorV2 WebView2 interface.
 
 <p align="center">
   <img src="AlienCockpit/assets/AW18-10.png" alt="Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)" width="460" />
@@ -94,6 +94,6 @@ You do **not** need Visual Studio or any compiler to use AlienCockpit:
 
 ## Credits & License
 
-**AlienCockpit** is crafted by [**Irving Ngr**](https://ngservers.net) as a lightweight Windows 11 fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
+**AlienCockpit** is crafted by [**Irving Ngr**](https://ngservers.net) as a lightweight Windows 11 fork of [`alien-tools`](https://github.com/T-Troll/alien-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienTOOLS-SDK` and `AlienFan-SDK`.
 
 Licensed under the [MIT License](LICENSE).
