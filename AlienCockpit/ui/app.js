@@ -282,6 +282,10 @@ function findTouchpadLights() {
 }
 
 function findPowerButtonLights() {
+  const dev0551 = state.devices.find((d) => d.pid === 0x0551 && (d.lights || []).some((l) => l.id === 31));
+  if (dev0551) {
+    return [{ pid: dev0551.pid, lid: 31 }];
+  }
   const hits = [];
   getOrderedDevicesForPeripheralScan().forEach((dev) => {
     (dev.lights || []).forEach((l) => {
@@ -1608,8 +1612,13 @@ function applyTelemetry(data) {
 
   if (data.thermals) {
     if (typeof data.thermals.powerMode === 'number') {
+      const isAuto = !!data.thermals.fanAuto;
       document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
-        b.classList.toggle('active', parseInt(b.dataset.pm, 10) === data.thermals.powerMode);
+        const pm = b.dataset.pm;
+        const active = (pm === 'auto')
+          ? isAuto
+          : (!isAuto && parseInt(pm, 10) === data.thermals.powerMode);
+        b.classList.toggle('active', active);
       });
     }
 
@@ -1861,29 +1870,7 @@ function syncVirtualLightingFromState() {
     }
   });
 
-  // 2. Sync RGB Touchpad
-  const tpEl = document.getElementById('rgb-touchpad');
-  if (tpEl) {
-    let tpCol = null;
-    let tpBase = null;
-    let tpBright = 100;
-    findTouchpadLights().forEach((t) => {
-      const k = `${t.pid}:${t.lid}`;
-      if (litBaseColorMap.has(k) && !tpBase) {
-        tpBase = litBaseColorMap.get(k);
-        tpBright = litBrightMap.get(k) ?? 100;
-      }
-      const hit = litColorMap.get(k);
-      if (hit && !tpCol) tpCol = hit;
-    });
-    if (tpBase) {
-      state.zoneBaseColors.touchpad = tpBase;
-      state.zoneBrightnessMap.touchpad = tpBright;
-    }
-    applyTouchpadVisualStyle(tpEl, tpCol);
-  }
-
-  // 3. Sync Mouse zones
+  // 2. Sync Mouse zones
   const mouseDev = getTargetDeviceForView('mouse');
   const mouseSingleZone = mouseDev && (mouseDev.lights || []).filter((l) => (l.flags & 1) === 0).length <= 1;
   document.querySelectorAll('.mouse-zone').forEach((zoneEl) => {
@@ -2480,11 +2467,22 @@ function initMiscActions() {
     }
   });
 
+  const btnOpenProfiles = document.getElementById('btn-open-profiles-folder');
+  if (btnOpenProfiles) {
+    btnOpenProfiles.addEventListener('click', () => {
+      sendCommand({ cmd: 'openProfilesLocation' });
+    });
+  }
+
   document.querySelectorAll('#power-mode-bar .seg-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      sendCommand({ cmd: 'setPowerMode', mode: parseInt(btn.dataset.pm, 10) });
+      if (btn.dataset.pm === 'auto') {
+        sendCommand({ cmd: 'setFanAuto' });
+      } else {
+        sendCommand({ cmd: 'setPowerMode', mode: parseInt(btn.dataset.pm, 10) });
+      }
     });
   });
 
@@ -2506,7 +2504,7 @@ function initMiscActions() {
         sendCommand({ cmd: 'setPowerMode', mode: 3 });
       } else {
         document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
-          b.classList.toggle('active', parseInt(b.dataset.pm, 10) === 0);
+          b.classList.toggle('active', b.dataset.pm === 'auto');
         });
         sendCommand({ cmd: 'setFanCurve', fanId: -1, sensorId: getPrimarySensorId(), active: true, points: state.fanCurve });
       }
@@ -2555,7 +2553,7 @@ function initMiscActions() {
 
   document.getElementById('btn-save-curve').addEventListener('click', () => {
     document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
-      b.classList.toggle('active', parseInt(b.dataset.pm, 10) === 0);
+      b.classList.toggle('active', b.dataset.pm === 'auto');
     });
     sendCommand({ cmd: 'setFanCurve', fanId: -1, sensorId: getPrimarySensorId(), active: true, points: state.fanCurve });
   });
@@ -2570,16 +2568,26 @@ function initMiscActions() {
   const setIntroSpeedVal = document.getElementById('set-intro-speed-val');
   const introSpeedLabels = ['Very Slow', 'Slow', 'Medium', 'Fast', 'Very Fast'];
 
+  const parseSpeedIdx = (raw) => {
+    const parsed = parseInt(raw, 10);
+    return Number.isNaN(parsed) ? 2 : Math.max(0, Math.min(4, parsed));
+  };
+
   if (setIntroStyle) {
     setIntroStyle.addEventListener('change', (e) => {
-      const style = parseInt(e.target.value, 10) || 0;
+      const parsed = parseInt(e.target.value, 10);
+      const style = Number.isNaN(parsed) ? 1 : parsed;
       state.settings.introStyle = style;
       sendCommand({ cmd: 'setSettings', introStyle: style });
     });
   }
   if (setIntroText) {
+    setIntroText.addEventListener('input', (e) => {
+      const cleaned = (e.target.value || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
+      if (e.target.value !== cleaned) e.target.value = cleaned;
+    });
     setIntroText.addEventListener('change', (e) => {
-      const text = (e.target.value || '').trim().slice(0, 10) || 'COCKPIT';
+      const text = (e.target.value || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || 'COCKPIT';
       e.target.value = text;
       state.settings.introText = text;
       sendCommand({ cmd: 'setSettings', introText: text });
@@ -2587,12 +2595,13 @@ function initMiscActions() {
   }
   if (setIntroSpeed) {
     setIntroSpeed.addEventListener('input', (e) => {
-      const idx = Math.max(0, Math.min(4, parseInt(e.target.value, 10) || 2));
+      const idx = parseSpeedIdx(e.target.value);
       if (setIntroSpeedVal) setIntroSpeedVal.textContent = introSpeedLabels[idx];
     });
     setIntroSpeed.addEventListener('change', (e) => {
-      const idx = Math.max(0, Math.min(4, parseInt(e.target.value, 10) || 2));
+      const idx = parseSpeedIdx(e.target.value);
       state.settings.introSpeed = idx;
+      if (setIntroSpeedVal) setIntroSpeedVal.textContent = introSpeedLabels[idx];
       sendCommand({ cmd: 'setSettings', introSpeed: idx });
     });
   }
@@ -2600,10 +2609,19 @@ function initMiscActions() {
   const btnTestIntro = document.getElementById('btn-test-intro');
   if (btnTestIntro) {
     btnTestIntro.addEventListener('click', () => {
-      const style = setIntroStyle ? (parseInt(setIntroStyle.value, 10) || 0) : 1;
-      const speed = setIntroSpeed ? (parseInt(setIntroSpeed.value, 10) || 2) : 2;
-      const text = setIntroText ? ((setIntroText.value || '').trim().slice(0, 10) || 'COCKPIT') : 'COCKPIT';
+      const styleParsed = setIntroStyle ? parseInt(setIntroStyle.value, 10) : 1;
+      const style = Number.isNaN(styleParsed) ? 1 : styleParsed;
+      const speed = setIntroSpeed ? parseSpeedIdx(setIntroSpeed.value) : 2;
+      const text = setIntroText ? ((setIntroText.value || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 10) || 'COCKPIT') : 'COCKPIT';
       sendCommand({ cmd: 'testIntro', style, speed, text });
+    });
+  }
+
+  const linkAuthorSite = document.getElementById('link-author-site');
+  if (linkAuthorSite) {
+    linkAuthorSite.addEventListener('click', (e) => {
+      e.preventDefault();
+      sendCommand({ cmd: 'openExternalUrl', url: 'https://ngservers.net' });
     });
   }
 
@@ -2636,6 +2654,9 @@ function initMiscActions() {
     if (!el) return;
     el.addEventListener('change', (e) => {
       sendCommand({ cmd: 'setSettings', [key]: e.target.checked });
+      if (key === 'lowBatteryAlert' && e.target.checked) {
+        sendCommand({ cmd: 'previewLowBatteryAlert' });
+      }
       if (key === 'alwaysAdmin' && e.target.checked && !state.settings.isAdmin) {
         setTimeout(() => window.restartAsAdmin(), 180);
       }

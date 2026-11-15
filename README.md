@@ -7,9 +7,9 @@
 **AlienCockpit** is an ultra-lightweight, low-resource command center for **Windows 11** built as a modern fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools). Unlike heavy vendor suites such as Alienware Command Center (AWCC), AlienCockpit consumes **minimal RAM and near-0% idle CPU** with **no bloated background telemetry or updater services**. It pairs the rock-solid hardware stability of the open-source `AlienFX-SDK` and `AlienFan-SDK` C++ engines with a crisp PerMonitorV2 WebView2 interface.
 
 <p align="center">
-  <img src="AlienCockpit/assets/AW18-10.png" alt="Optimized for Alienware 18 Area-51 (AA18250)" width="460" />
+  <img src="AlienCockpit/assets/AW18-10.png" alt="Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)" width="460" />
   <br />
-  <sub><b>Optimized for Alienware 18 Area-51 (AA18250)</b> — Full 45-LED Chassis, Rear Lightbar (#0–#30), Left/Right Fans (#34/#33), Lid Alienhead (#32), Power Button (#31), and 10-LED RGB Touchpad (#35–#44)</sub>
+  <sub><b>Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)</b> — Full 45-LED Chassis, Rear Lightbar (#0–#30), Left/Right Fans (#34/#33), Lid Alienhead (#32), Power Button (#31), and 10-LED RGB Touchpad (#35–#44)</sub>
 </p>
 
 ---
@@ -81,8 +81,14 @@ You do **not** need Visual Studio or any compiler to use AlienCockpit:
 
 ---
 
+## Disclaimer
+
+**AlienCockpit** is provided **"as is"**, without warranty of any kind. By using this software, you acknowledge that the developer is **not responsible** for any hardware damage, LED wear, thermal issues, or other damage that may result from its use.
+
+---
+
 ## Credits & License
 
-**AlienCockpit** is crafted by **Irving Ngr** as a lightweight Windows 11 fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
+**AlienCockpit** is crafted by [**Irving Ngr**](https://ngservers.net) as a lightweight Windows 11 fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools) by **Rik Lain (T-Troll)**. All low-level HID/USB/ACPI hardware communication is powered by `AlienFX-SDK` and `AlienFan-SDK`.
 
 Licensed under the [MIT License](LICENSE).

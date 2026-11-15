@@ -102,7 +102,7 @@
         <div class="nav-footer">
           <div class="status-badge" id="backend-status">
             <span class="status-dot"></span>
-            <span id="backend-status-text">HUD READY</span>
+            <span id="backend-status-text">v1.0.11</span>
           </div>
         </div>
       </nav>
@@ -158,9 +158,6 @@
                   <div class="kbd-deck-row">
                     <div class="kbd-frame" id="kbd-grid"></div>
                     <div class="kbd-numpad" id="kbd-numpad"></div>
-                  </div>
-                  <div class="touchpad-zone" id="rgb-touchpad" data-zone-id="touchpad" data-zone-name="RGB Touchpad" title="Click to select RGB Touchpad">
-                    <span>RGB TOUCHPAD</span>
                   </div>
                 </div>
               </div>
@@ -488,6 +485,7 @@
               <p class="subtitle">ACPI BIOS fan curves, temperature sensors, and performance power modes.</p>
             </div>
             <div class="power-mode-bar" id="power-mode-bar">
+              <button class="seg-btn" data-pm="auto" id="btn-fan-auto" title="Automatic temperature-based fan curve">Auto</button>
               <button class="seg-btn active" data-pm="0">Quiet</button>
               <button class="seg-btn" data-pm="1">Balanced</button>
               <button class="seg-btn" data-pm="2">Performance</button>
@@ -550,6 +548,7 @@
             <div class="profile-create-row">
               <input type="text" id="new-profile-name" placeholder="New profile name..." />
               <button class="btn-primary" id="btn-create-profile">+ Create Profile</button>
+              <button class="btn-secondary" id="btn-open-profiles-folder" title="Export and open profiles storage folder">Open Folder</button>
             </div>
           </div>
 
@@ -682,12 +681,13 @@
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div class="about-info">
               <div class="about-title-row">
-                <h3>AlienCockpit v1.0.10 — AWCC Alternative</h3>
-                <span class="about-model-badge">Optimized for Alienware 18 Area-51 (AA18250)</span>
+                <h3>AlienCockpit v1.0.11 — AWCC Alternative</h3>
+                <span class="about-model-badge">Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)</span>
               </div>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
+              <p class="hint-text" style="margin-top:6px;"><strong>Disclaimer:</strong> This software is provided &ldquo;as is&rdquo; without warranty. The developer is not responsible for any hardware damage, LED wear, thermal issues, or other damage resulting from the use of this software.</p>
               <div class="credits-author">
-                <span>Crafted by <strong>Irving Ngr</strong></span>
+                <span>Crafted by <a href="https://ngservers.net" id="link-author-site" style="color:var(--accent);text-decoration:none;font-weight:700;">Irving Ngr</a></span>
                 <svg class="vz-flag" viewBox="0 0 36 24" aria-label="Venezuela Flag" role="img">
                   <rect width="36" height="8" y="0" fill="#FFCC00"/>
                   <rect width="36" height="8" y="8" fill="#00247D"/>
@@ -707,7 +707,7 @@
               </div>
             </div>
             <div class="about-laptop-showcase">
-              <img src="assets/AW18-10.png" alt="Alienware 18 Area-51 (AA18250)" class="about-laptop-img" draggable="false" />
+              <img src="assets/AW18-10.png" alt="Alienware 18 &amp; 16 Area-51 (AA18250)" class="about-laptop-img" draggable="false" />
             </div>
           </div>
         </section>

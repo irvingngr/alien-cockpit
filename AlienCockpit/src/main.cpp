@@ -431,6 +431,7 @@ static void EnsureDefaultDeviceMappings() {
             };
             auto isGenericZoneName = [](const std::string& nm) -> bool {
                 return nm.empty() || nm.rfind("LED Zone ", 0) == 0 || nm.rfind("Light ", 0) == 0 ||
+                    nm.rfind("Rear Vents ", 0) == 0 ||
                     nm == "Rear" || nm == "Logo" || nm == "Left" || nm == "Right" || nm == "Power";
             };
             int targetCount = (dev.dev->v4MaxZones > 0 && dev.dev->v4MaxZones < 45)
@@ -449,13 +450,20 @@ static void EnsureDefaultDeviceMappings() {
                     nl.name = cName;
                     dev.lights.push_back(nl);
                     anyAdded = true;
-                } else if (isGenericZoneName(it->name)) {
-                    it->name = cName;
-                    if (cFlags != 0) it->flags |= cFlags;
-                    anyAdded = true;
-                } else if (lid == 31 && (it->flags & ALIENFX_FLAG_POWER) == 0) {
-                    it->flags |= ALIENFX_FLAG_POWER;
-                    anyAdded = true;
+                } else {
+                    if (isGenericZoneName(it->name)) {
+                        it->name = cName;
+                        anyAdded = true;
+                    }
+                    if (lid == 31) {
+                        if ((it->flags & ALIENFX_FLAG_POWER) == 0) {
+                            it->flags |= ALIENFX_FLAG_POWER;
+                            anyAdded = true;
+                        }
+                    } else if (it->flags & ALIENFX_FLAG_POWER) {
+                        it->flags &= ~ALIENFX_FLAG_POWER;
+                        anyAdded = true;
+                    }
                 }
             }
             for (auto lit = dev.lights.begin(); lit != dev.lights.end(); ) {

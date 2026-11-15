@@ -9,10 +9,13 @@
 #include "ConfigFan.h"
 #include <winsvc.h>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +37,9 @@ static bool g_probeActive = false;
 static bool g_introActive = false;
 static int g_activeIntroStyle = 0;
 static ULONGLONG g_introStartMs = 0;
+static bool g_lowBattPreviewActive = false;
+static ULONGLONG g_lowBattPreviewStartMs = 0;
+static ULONGLONG g_lastTouchpadActivityMs = 0;
 
 struct WaterDrop {
     double x;
@@ -59,6 +65,18 @@ struct CrossfadeState {
 static std::unordered_map<DWORD, AlienFX_SDK::Afx_action> g_lastSentRgb;
 static CrossfadeState g_crossfade;
 static bool g_forceFullSoftwareFrame = true;
+
+static std::string SanitizeAlnum10(const std::string& raw) {
+    std::string out;
+    out.reserve(10);
+    for (unsigned char ch : raw) {
+        if (std::isalnum(ch)) {
+            out.push_back(static_cast<char>(ch));
+            if (out.size() >= 10) break;
+        }
+    }
+    return out;
+}
 
 static std::string TrimWhitespace(const std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
@@ -236,7 +254,20 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
         int uiPowerMode = (mon->fullSpeedManual || (mon->powerSize > 0 && mon->powerMode >= mon->powerSize))
             ? 3
             : static_cast<int>(mon->powerMode);
+        bool hasActiveCurve = false;
+        if (fan_conf && fan_conf->lastProf) {
+            for (const auto& fkv : fan_conf->lastProf->fanControls) {
+                for (const auto& skv : fkv.second) {
+                    if (skv.second.active) {
+                        hasActiveCurve = true;
+                        break;
+                    }
+                }
+                if (hasActiveCurve) break;
+            }
+        }
         fanData["powerMode"] = uiPowerMode;
+        fanData["fanAuto"] = (uiPowerMode == 0 && !mon->fullSpeedManual && hasActiveCurve);
         SimpleJson::Value sensors = SimpleJson::Value::Array();
         for (const auto& kv : mon->senValues) {
             SimpleJson::Value s = SimpleJson::Value::Object();
@@ -789,6 +820,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
             conf->modifyProfile.unlockWrite();
 
+            g_lastTouchpadActivityMs = GetTickCount64();
             fxhl->deferV5Refresh = true;
             fxhl->ClearAndRefresh(true);
             fxhl->deferV5Refresh = false;
@@ -903,14 +935,77 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         if (conf) {
             if (msg.has("speed")) conf->introSpeed = static_cast<DWORD>(std::clamp(msg.get("speed").asInt(2), 0, 4));
             if (msg.has("text")) {
-                std::string t = TrimWhitespace(msg.get("text").asString());
-                if (t.size() > 10) t.resize(10);
+                std::string t = SanitizeAlnum10(msg.get("text").asString());
                 if (!t.empty()) conf->introText = t;
             }
         }
         int style = msg.has("style") ? msg.get("style").asInt(-1) : -1;
         CockpitBridge::TriggerStartupIntro(style);
         return "{\"ok\":true}";
+    }
+
+    if (cmd == "previewLowBatteryAlert" && conf && fxhl) {
+        g_probeActive = false;
+        g_introActive = false;
+        g_lowBattPreviewActive = true;
+        g_lowBattPreviewStartMs = GetTickCount64();
+        g_lastSentRgb.clear();
+        g_forceFullSoftwareFrame = true;
+        return "{\"ok\":true}";
+    }
+
+    if (cmd == "openExternalUrl") {
+        std::string url = TrimWhitespace(msg.get("url").asString());
+        if (url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0) {
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
+            if (wlen > 0) {
+                std::wstring wurl(wlen, L'\0');
+                MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, wurl.data(), wlen);
+                ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            return "{\"ok\":true}";
+        }
+        return "{\"ok\":false}";
+    }
+
+    if (cmd == "openProfilesLocation") {
+        wchar_t appData[MAX_PATH]{};
+        std::wstring dirW;
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData)) && appData[0] != L'\0') {
+            dirW = std::wstring(appData) + L"\\AlienCockpit\\Profiles";
+            std::wstring baseW = std::wstring(appData) + L"\\AlienCockpit";
+            CreateDirectoryW(baseW.c_str(), nullptr);
+            CreateDirectoryW(dirW.c_str(), nullptr);
+
+            std::wstring regPath = dirW + L"\\AlienCockpit-Profiles.reg";
+            std::wstring regCmd = L"export \"HKCU\\SOFTWARE\\AlienCockpit\\Profiles\" \"" + regPath + L"\" /y";
+            SHELLEXECUTEINFOW sei{};
+            sei.cbSize = sizeof(sei);
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+            sei.lpVerb = L"open";
+            sei.lpFile = L"reg.exe";
+            sei.lpParameters = regCmd.c_str();
+            sei.nShow = SW_HIDE;
+            if (ShellExecuteExW(&sei) && sei.hProcess) {
+                WaitForSingleObject(sei.hProcess, 2000);
+                CloseHandle(sei.hProcess);
+            }
+
+            std::wstring readmePath = dirW + L"\\README.txt";
+            std::ofstream rf(readmePath, std::ios::binary | std::ios::trunc);
+            if (rf.is_open()) {
+                rf << "AlienCockpit stores live profiles in Windows Registry:\r\n"
+                   << "  HKEY_CURRENT_USER\\SOFTWARE\\AlienCockpit\\Profiles\r\n"
+                   << "Device LED mappings are stored in:\r\n"
+                   << "  HKEY_CURRENT_USER\\SOFTWARE\\AlienCockpit\\SDK\r\n\r\n"
+                   << "A fresh backup (AlienCockpit-Profiles.reg) is exported to this folder whenever you click Open Profiles Folder.\r\n";
+                rf.close();
+            }
+
+            ShellExecuteW(nullptr, L"open", dirW.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            return "{\"ok\":true}";
+        }
+        return "{\"ok\":false}";
     }
 
     if (cmd == "emergencyWhite" && conf && fxhl) {
@@ -1300,8 +1395,46 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         if (rawMode >= 3) {
             mon->SetFullSpeed();
         } else {
+            if (rawMode == 0 && fan_conf->lastProf) {
+                for (auto& fkv : fan_conf->lastProf->fanControls) {
+                    for (auto& skv : fkv.second) {
+                        skv.second.active = false;
+                    }
+                }
+            }
             mon->SetPowerMode(static_cast<byte>(std::clamp(rawMode, 0, 255)));
         }
+        fan_conf->Save();
+        RefreshTelemetryCache(false);
+        return BuildTelemetryJson();
+    }
+
+    if (cmd == "setFanAuto" && mon && fan_conf) {
+        WORD sensorId = 0;
+        if (mon->acpi && !mon->acpi->sensors.empty()) {
+            sensorId = mon->acpi->sensors.front().sid;
+        } else if (!mon->senValues.empty()) {
+            sensorId = mon->senValues.begin()->first;
+        }
+        if (fan_conf->lastProf) {
+            int fc = std::max<int>(1, static_cast<int>(mon->fansize));
+            for (int fi = 0; fi < fc; ++fi) {
+                byte fId = static_cast<byte>(fi);
+                sen_block* activeBlk = nullptr;
+                for (auto& skv : fan_conf->lastProf->fanControls[fId]) {
+                    if (!skv.second.points.empty()) {
+                        activeBlk = &skv.second;
+                        break;
+                    }
+                }
+                if (!activeBlk) {
+                    activeBlk = &fan_conf->lastProf->fanControls[fId][sensorId];
+                    activeBlk->points = { {30, 0}, {50, 30}, {65, 55}, {80, 85}, {90, 100} };
+                }
+                activeBlk->active = true;
+            }
+        }
+        mon->SetPowerMode(0);
         fan_conf->Save();
         RefreshTelemetryCache(false);
         return BuildTelemetryJson();
@@ -1378,8 +1511,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         if (msg.has("introStyle")) conf->introStyle = static_cast<DWORD>(std::clamp(msg.get("introStyle").asInt(1), 0, 2));
         if (msg.has("introSpeed")) conf->introSpeed = static_cast<DWORD>(std::clamp(msg.get("introSpeed").asInt(2), 0, 4));
         if (msg.has("introText")) {
-            std::string t = TrimWhitespace(msg.get("introText").asString());
-            if (t.size() > 10) t.resize(10);
+            std::string t = SanitizeAlnum10(msg.get("introText").asString());
             conf->introText = t.empty() ? "COCKPIT" : t;
         }
         if (msg.has("wavesColor")) {
@@ -1388,8 +1520,14 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             conf->wavesColor = (static_cast<DWORD>(r) << 16) | (static_cast<DWORD>(g) << 8) | static_cast<DWORD>(b);
         }
         if (msg.has("wavesBrightness")) conf->wavesBrightness = static_cast<DWORD>(std::clamp(msg.get("wavesBrightness").asInt(100), 10, 100));
-        if (msg.has("touchpadAlwaysOn")) conf->touchpadAlwaysOn = msg.get("touchpadAlwaysOn").asBool(false) ? 1 : 0;
-        if (msg.has("touchpadTimeout")) conf->touchpadTimeout = static_cast<DWORD>(std::clamp(msg.get("touchpadTimeout").asInt(10), 1, 300));
+        if (msg.has("touchpadAlwaysOn")) {
+            conf->touchpadAlwaysOn = msg.get("touchpadAlwaysOn").asBool(false) ? 1 : 0;
+            g_lastTouchpadActivityMs = GetTickCount64();
+        }
+        if (msg.has("touchpadTimeout")) {
+            conf->touchpadTimeout = static_cast<DWORD>(std::clamp(msg.get("touchpadTimeout").asInt(10), 1, 300));
+            g_lastTouchpadActivityMs = GetTickCount64();
+        }
         if (msg.has("lowBatteryAlert")) conf->lowBatteryAlert = msg.get("lowBatteryAlert").asBool(true) ? 1 : 0;
         if (msg.has("gammaCorrection")) conf->gammaCorrection = msg.get("gammaCorrection").asBool(true) ? 1 : 0;
         if (msg.has("enableProfSwitch")) conf->enableProfSwitch = msg.get("enableProfSwitch").asBool(true) ? 1 : 0;
@@ -1855,7 +1993,13 @@ void CockpitBridge::StepAnimatedEffects() {
     static ULONGLONG s_lastPowerPollMs = 0;
     static bool s_lowBattCondition = false;
 
-    if (conf->lowBatteryAlert) {
+    if (g_lowBattPreviewActive) {
+        g_lowBattPreviewActive = false;
+        s_lowBattActive = true;
+        s_lowBattStartMs = g_lowBattPreviewStartMs ? g_lowBattPreviewStartMs : nowMs;
+        g_lastSentRgb.clear();
+        g_forceFullSoftwareFrame = true;
+    } else if (conf->lowBatteryAlert) {
         if (s_lastPowerPollMs == 0 || (nowMs - s_lastPowerPollMs) >= 2000) {
             s_lastPowerPollMs = nowMs;
             SYSTEM_POWER_STATUS sps{};
@@ -1980,11 +2124,11 @@ void CockpitBridge::StepAnimatedEffects() {
     waveCrest.g = static_cast<byte>(std::lround(((conf->wavesColor >> 8) & 0xFF) * wbScale));
     waveCrest.b = static_cast<byte>(std::lround((conf->wavesColor & 0xFF) * wbScale));
 
-    static ULONGLONG s_lastV4FrameMs = 0;
     static ULONGLONG s_lastTouchpadKeepAliveMs = 0;
-    bool allowV4Frame = (nowMs - s_lastV4FrameMs) >= 66;
-    bool touchpadKeepAliveTick = (conf->touchpadAlwaysOn != 0) && ((nowMs - s_lastTouchpadKeepAliveMs) >= 2000);
-    bool v4AnySent = false;
+    bool touchpadWindowActive = (conf->touchpadAlwaysOn != 0) ||
+        (conf->touchpadTimeout > 10 && g_lastTouchpadActivityMs != 0 &&
+         (nowMs - g_lastTouchpadActivityMs) < static_cast<ULONGLONG>(conf->touchpadTimeout) * 1000ULL);
+    bool touchpadKeepAliveTick = touchpadWindowActive && ((nowMs - s_lastTouchpadKeepAliveMs) >= 4000);
 
     bool anyUpdated = false;
     bool anyDevSkipped = false;
@@ -2021,10 +2165,11 @@ void CockpitBridge::StepAnimatedEffects() {
                 continue;
             }
             bool isTouchpadLed = (isV4 && gl.lid >= 35 && gl.lid <= 44);
-            if (isStaticLs && !isFading && !needWavePass && !(touchpadKeepAliveTick && isTouchpadLed)) {
+            // API_V4 uses its hardware engine via ClearAndRefresh(true); only drive Touchpad keep-alive in software
+            if (isV4 && !(touchpadKeepAliveTick && isTouchpadLed)) {
                 continue;
             }
-            if (isV4 && !allowV4Frame && !finalSettleFrame && !(touchpadKeepAliveTick && isTouchpadLed)) {
+            if (isStaticLs && !isFading && !needWavePass && !(touchpadKeepAliveTick && isTouchpadLed)) {
                 continue;
             }
             // Never drive hardware Power Button indicator in software loop
@@ -2138,13 +2283,11 @@ void CockpitBridge::StepAnimatedEffects() {
                 std::vector<AlienFX_SDK::Afx_action> acts{ frame };
                 fxhl->SetLight(gl.lgh, &acts);
                 anyUpdated = true;
-                if (isV4) v4AnySent = true;
             }
         }
     }
     conf->modifyProfile.unlockRead();
 
-    if (v4AnySent) s_lastV4FrameMs = nowMs;
     if (touchpadKeepAliveTick) s_lastTouchpadKeepAliveMs = nowMs;
 
     if (needWavePass) {
