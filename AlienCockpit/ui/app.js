@@ -1002,6 +1002,27 @@ function initLightingControls() {
     });
   }
 
+  const wavesColorEl = document.getElementById('waves-color-picker');
+  const wavesBrightEl = document.getElementById('waves-brightness');
+  const wavesBrightValEl = document.getElementById('waves-brightness-val');
+
+  if (wavesColorEl) {
+    wavesColorEl.addEventListener('change', (e) => {
+      state.settings.wavesColor = e.target.value;
+      sendCommand({ cmd: 'setWavesOptions', color: e.target.value });
+    });
+  }
+  if (wavesBrightEl) {
+    wavesBrightEl.addEventListener('input', (e) => {
+      if (wavesBrightValEl) wavesBrightValEl.textContent = `${e.target.value}%`;
+    });
+    wavesBrightEl.addEventListener('change', (e) => {
+      const b = parseInt(e.target.value, 10) || 100;
+      state.settings.wavesBrightness = b;
+      sendCommand({ cmd: 'setWavesOptions', brightness: b });
+    });
+  }
+
   const btnGlobalWaves = document.getElementById('btn-global-waves');
   if (btnGlobalWaves) {
     btnGlobalWaves.addEventListener('click', () => {
@@ -1009,7 +1030,12 @@ function initLightingControls() {
       state.settings.wavesMode = state.wavesMode;
       updateWavesModeUI();
       syncVirtualLightingFromState();
-      sendCommand({ cmd: 'toggleWaves', enabled: state.wavesMode });
+      sendCommand({
+        cmd: 'toggleWaves',
+        enabled: state.wavesMode,
+        color: wavesColorEl ? wavesColorEl.value : undefined,
+        brightness: wavesBrightEl ? (parseInt(wavesBrightEl.value, 10) || 100) : undefined
+      });
     });
   }
 
@@ -2176,7 +2202,28 @@ function applyFullState(data) {
     const setStartupIntro = document.getElementById('set-startup-intro');
     if (setStartupIntro) setStartupIntro.checked = data.settings.startupIntro !== false;
     const setIntroStyle = document.getElementById('set-intro-style');
-    if (setIntroStyle) setIntroStyle.value = String(data.settings.introStyle ?? 0);
+    if (setIntroStyle) setIntroStyle.value = String(data.settings.introStyle ?? 1);
+    const setIntroText = document.getElementById('set-intro-text');
+    if (setIntroText && data.settings.introText !== undefined) setIntroText.value = data.settings.introText || 'COCKPIT';
+    const introSpeedLabels = ['Very Slow', 'Slow', 'Medium', 'Fast', 'Very Fast'];
+    const spdIdx = Math.max(0, Math.min(4, data.settings.introSpeed ?? 2));
+    const setIntroSpeed = document.getElementById('set-intro-speed');
+    if (setIntroSpeed) setIntroSpeed.value = String(spdIdx);
+    const setIntroSpeedVal = document.getElementById('set-intro-speed-val');
+    if (setIntroSpeedVal) setIntroSpeedVal.textContent = introSpeedLabels[spdIdx];
+    const setLowBatt = document.getElementById('set-low-batt-alert');
+    if (setLowBatt) setLowBatt.checked = data.settings.lowBatteryAlert !== false;
+    const wavesColorEl = document.getElementById('waves-color-picker');
+    if (wavesColorEl && data.settings.wavesColor) wavesColorEl.value = data.settings.wavesColor;
+    const wavesBrightEl = document.getElementById('waves-brightness');
+    const wavesBrightValEl = document.getElementById('waves-brightness-val');
+    const wb = data.settings.wavesBrightness ?? 100;
+    if (wavesBrightEl) wavesBrightEl.value = String(wb);
+    if (wavesBrightValEl) wavesBrightValEl.textContent = `${wb}%`;
+    const tpAlwaysEl = document.getElementById('set-touchpad-always-on');
+    if (tpAlwaysEl) tpAlwaysEl.checked = !!data.settings.touchpadAlwaysOn;
+    const tpTimeoutEl = document.getElementById('set-touchpad-timeout');
+    if (tpTimeoutEl) tpTimeoutEl.value = String(data.settings.touchpadTimeout ?? 10);
     document.getElementById('set-prof-switch').checked = !!data.settings.enableProfSwitch;
     document.getElementById('set-gamma').checked = !!data.settings.gammaCorrection;
     document.getElementById('set-fan-control').checked = !!data.settings.fanControl;
@@ -2518,6 +2565,11 @@ function initMiscActions() {
   });
 
   const setIntroStyle = document.getElementById('set-intro-style');
+  const setIntroText = document.getElementById('set-intro-text');
+  const setIntroSpeed = document.getElementById('set-intro-speed');
+  const setIntroSpeedVal = document.getElementById('set-intro-speed-val');
+  const introSpeedLabels = ['Very Slow', 'Slow', 'Medium', 'Fast', 'Very Fast'];
+
   if (setIntroStyle) {
     setIntroStyle.addEventListener('change', (e) => {
       const style = parseInt(e.target.value, 10) || 0;
@@ -2525,12 +2577,43 @@ function initMiscActions() {
       sendCommand({ cmd: 'setSettings', introStyle: style });
     });
   }
+  if (setIntroText) {
+    setIntroText.addEventListener('change', (e) => {
+      const text = (e.target.value || '').trim().slice(0, 10) || 'COCKPIT';
+      e.target.value = text;
+      state.settings.introText = text;
+      sendCommand({ cmd: 'setSettings', introText: text });
+    });
+  }
+  if (setIntroSpeed) {
+    setIntroSpeed.addEventListener('input', (e) => {
+      const idx = Math.max(0, Math.min(4, parseInt(e.target.value, 10) || 2));
+      if (setIntroSpeedVal) setIntroSpeedVal.textContent = introSpeedLabels[idx];
+    });
+    setIntroSpeed.addEventListener('change', (e) => {
+      const idx = Math.max(0, Math.min(4, parseInt(e.target.value, 10) || 2));
+      state.settings.introSpeed = idx;
+      sendCommand({ cmd: 'setSettings', introSpeed: idx });
+    });
+  }
 
   const btnTestIntro = document.getElementById('btn-test-intro');
   if (btnTestIntro) {
     btnTestIntro.addEventListener('click', () => {
-      const style = setIntroStyle ? (parseInt(setIntroStyle.value, 10) || 0) : 0;
-      sendCommand({ cmd: 'testIntro', style });
+      const style = setIntroStyle ? (parseInt(setIntroStyle.value, 10) || 0) : 1;
+      const speed = setIntroSpeed ? (parseInt(setIntroSpeed.value, 10) || 2) : 2;
+      const text = setIntroText ? ((setIntroText.value || '').trim().slice(0, 10) || 'COCKPIT') : 'COCKPIT';
+      sendCommand({ cmd: 'testIntro', style, speed, text });
+    });
+  }
+
+  const tpTimeoutEl = document.getElementById('set-touchpad-timeout');
+  if (tpTimeoutEl) {
+    tpTimeoutEl.addEventListener('change', (e) => {
+      const sec = Math.max(1, Math.min(300, parseInt(e.target.value, 10) || 10));
+      e.target.value = String(sec);
+      state.settings.touchpadTimeout = sec;
+      sendCommand({ cmd: 'setSettings', touchpadTimeout: sec });
     });
   }
 
@@ -2539,6 +2622,8 @@ function initMiscActions() {
     'set-start-minimized': 'startMinimized',
     'set-always-admin': 'alwaysAdmin',
     'set-startup-intro': 'startupIntro',
+    'set-low-batt-alert': 'lowBatteryAlert',
+    'set-touchpad-always-on': 'touchpadAlwaysOn',
     'set-prof-switch': 'enableProfSwitch',
     'set-gamma': 'gammaCorrection',
     'set-fan-control': 'fanControl',

@@ -169,7 +169,8 @@ void ConfigHandler::Load() {
 	GetReg("Minimized", &startMinimized);
 	GetReg("AlwaysAdmin", &alwaysAdmin);
 	GetReg("StartupIntro", &startupIntro, 1);
-	GetReg("IntroStyle", &introStyle, 0);
+	GetReg("IntroStyle", &introStyle, 1);
+	GetReg("IntroSpeed", &introSpeed, 2);
 	GetReg("UpdateCheck", &updateCheck, 1);
 	GetReg("LightsOn", &lightsOn, 1);
 	GetReg("Dimmed", &dimmed);
@@ -199,6 +200,22 @@ void ConfigHandler::Load() {
 		DWORD size = sizeof(DWORD);
 		if (RegGetValue(hKeyMain, NULL, "WavesMode", RRF_RT_DWORD | RRF_ZEROONFAILURE, NULL, &wavesMode, &size) != ERROR_SUCCESS) {
 			GetReg("SummerMode", &wavesMode, 0);
+		}
+	}
+	GetReg("WavesColor", &wavesColor, 0x00F0FF);
+	GetReg("WavesBrightness", &wavesBrightness, 100);
+	GetReg("TouchpadAlwaysOn", &touchpadAlwaysOn, 0);
+	GetReg("TouchpadTimeout", &touchpadTimeout, 10);
+	GetReg("LowBatteryAlert", &lowBatteryAlert, 1);
+
+	{
+		char introBuf[64]{};
+		DWORD introSize = sizeof(introBuf);
+		if (RegGetValueA(hKeyMain, NULL, "IntroText", RRF_RT_REG_SZ, NULL, introBuf, &introSize) == ERROR_SUCCESS && introBuf[0]) {
+			introText = introBuf;
+			if (introText.size() > 10) introText.resize(10);
+		} else {
+			introText = "COCKPIT";
 		}
 	}
 
@@ -393,6 +410,7 @@ void ConfigHandler::Save() {
 	SetReg("AlwaysAdmin", alwaysAdmin);
 	SetReg("StartupIntro", startupIntro);
 	SetReg("IntroStyle", introStyle);
+	SetReg("IntroSpeed", introSpeed);
 	SetReg("UpdateCheck", updateCheck);
 	SetReg("LightsOn", lightsOn);
 	SetReg("Dimmed", dimmed);
@@ -420,6 +438,12 @@ void ConfigHandler::Save() {
 	SetReg("GESpeed", geTact);
 	SetReg("MonDC", dcFreq);
 	SetReg("WavesMode", wavesMode);
+	SetReg("WavesColor", wavesColor);
+	SetReg("WavesBrightness", wavesBrightness);
+	SetReg("TouchpadAlwaysOn", touchpadAlwaysOn);
+	SetReg("TouchpadTimeout", touchpadTimeout);
+	SetReg("LowBatteryAlert", lowBatteryAlert);
+	RegSetValueExA(hKeyMain, "IntroText", 0, REG_SZ, (const BYTE*)introText.c_str(), (DWORD)(introText.size() + 1));
 	RegSetValueExA(hKeyMain, "FavoriteColors", 0, REG_SZ, (const BYTE*)favoriteColors.c_str(), (DWORD)(favoriteColors.size() + 1));
 
 	RegSetValueEx(hKeyMain, TEXT("CustomColors"), 0, REG_BINARY, (BYTE*)customColors, sizeof(DWORD) * 16);

@@ -117,10 +117,17 @@
               <p class="subtitle">Click or drag-select keys &amp; zones to paint colors and effects in real time.</p>
             </div>
             <div class="lighting-header-actions">
-              <button type="button" class="btn-global-waves" id="btn-global-waves" aria-pressed="false" title="Toggle Global Waves Mode across the active profile (key-press water ripple waves over active colors)">
-                <span class="waves-dot"></span>
-                <span>🌊 Waves Mode: <strong id="global-waves-state">OFF</strong></span>
-              </button>
+              <div class="waves-control-group">
+                <button type="button" class="btn-global-waves" id="btn-global-waves" aria-pressed="false" title="Toggle Global Waves Mode across the active profile (key-press water ripple waves over active colors)">
+                  <span class="waves-dot"></span>
+                  <span>🌊 Waves Mode: <strong id="global-waves-state">OFF</strong></span>
+                </button>
+                <div class="waves-options-pill" title="Customize Waves Mode ripple color and brightness">
+                  <input type="color" id="waves-color-picker" value="#00f0ff" aria-label="Waves Mode Color" />
+                  <input type="range" id="waves-brightness" min="10" max="100" value="100" aria-label="Waves Mode Brightness" />
+                  <span id="waves-brightness-val">100%</span>
+                </div>
+              </div>
               <div class="device-switcher">
                 <button class="seg-btn active" data-view="keyboard">Keyboard</button>
                 <button class="seg-btn" data-view="mouse">Gaming Mouse</button>
@@ -163,35 +170,38 @@
                 <div class="mouse-stage">
                   <svg viewBox="0 0 320 440" class="mouse-svg" id="mouse-svg">
                     <defs>
-                      <filter id="glow">
-                        <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+                      <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+                        <feGaussianBlur stdDeviation="5" result="coloredBlur"/>
                         <feMerge>
                           <feMergeNode in="coloredBlur"/>
                           <feMergeNode in="SourceGraphic"/>
                         </feMerge>
                       </filter>
                     </defs>
-                    <!-- Mouse Body -->
-                    <path d="M90,90 C90,35 230,35 230,90 L245,280 C248,365 210,405 160,405 C110,405 72,365 75,280 Z"
-                          fill="#0d1322" stroke="#24324d" stroke-width="3"/>
-                    <!-- Left & Right Click Split -->
-                    <line x1="160" y1="48" x2="160" y2="165" stroke="#1e2a42" stroke-width="2"/>
-                    <path d="M84,165 Q160,178 236,165" fill="none" stroke="#1e2a42" stroke-width="2"/>
+                    <!-- Sleek AW610M Body (12312.png style) -->
+                    <path d="M86,104 C86,36 234,36 234,104 L246,272 C248,364 212,404 160,404 C108,404 72,364 74,272 Z"
+                          fill="#0d1322" stroke="#28354c" stroke-width="3"/>
+                    <!-- Left & Right Click Split + Palm Seam -->
+                    <line x1="160" y1="48" x2="160" y2="164" stroke="#232f45" stroke-width="2"/>
+                    <path d="M80,164 Q160,174 240,164" fill="none" stroke="#232f45" stroke-width="2"/>
 
                     <!-- Zone 0: Side Strips & Wheel -->
                     <g class="mouse-zone" data-zone-id="0" data-zone-name="Side Strips &amp; Wheel">
-                      <rect class="mouse-paint" x="148" y="82" width="24" height="48" rx="10" fill="#1e293b"/>
-                      <path class="mouse-stroke" d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
-                      <path class="mouse-stroke" d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
+                      <rect class="mouse-paint" x="146" y="74" width="28" height="48" rx="12" fill="#1e293b"/>
+                      <path class="mouse-stroke" d="M75,204 C69,256 71,316 88,358" fill="none" stroke="#1e293b" stroke-width="6" stroke-linecap="round"/>
+                      <path class="mouse-stroke" d="M245,204 C251,256 249,316 232,358" fill="none" stroke="#1e293b" stroke-width="6" stroke-linecap="round"/>
                     </g>
 
                     <!-- Non-RGB Hardware DPI Status LED (Hardware Indicator Only) -->
-                    <rect x="151" y="142" width="18" height="18" rx="4" fill="#121a2b" stroke="#1e2a42" stroke-width="1"/>
+                    <rect x="149" y="136" width="22" height="20" rx="6" fill="#141c2e" stroke="#28354c" stroke-width="1.5"/>
 
-                    <!-- Zone 1: Mouse Logo -->
-                    <polygon class="mouse-zone mouse-paint" data-zone-id="1" data-zone-name="Mouse Logo"
-                             points="160,255 186,285 174,325 146,325 134,285"
-                             fill="#1e293b"/>
+                    <!-- Zone 1: Mouse Logo (Alienhead silhouette matching 12312.png) -->
+                    <g class="mouse-zone" data-zone-id="1" data-zone-name="Mouse Logo">
+                      <path class="mouse-paint" fill="#1e293b"
+                            d="M160,242 C136,242 122,258 122,280 C122,306 142,334 160,334 C178,334 198,306 198,280 C198,258 184,242 160,242 Z"/>
+                      <path fill="#0d1322" d="M134,284 C142,282 152,290 155,302 C145,304 136,296 134,284 Z"/>
+                      <path fill="#0d1322" d="M186,284 C178,282 168,290 165,302 C175,304 184,296 186,284 Z"/>
+                    </g>
                   </svg>
                   <div class="mouse-legend" id="mouse-zone-label">Click any AW610M mouse zone (Logo or Side Strips &amp; Wheel)</div>
                 </div>
@@ -300,6 +310,16 @@
                       <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="42" data-zone-name="Touchpad 8" title="#42 Touchpad 8"><span>42</span></button>
                       <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="43" data-zone-name="Touchpad 9" title="#43 Touchpad 9"><span>43</span></button>
                       <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="44" data-zone-name="Touchpad 10" title="#44 Touchpad 10"><span>44</span></button>
+                    </div>
+                    <div class="touchpad-behavior-bar">
+                      <label class="touchpad-opt-label" title="Periodically refresh Touchpad LEDs (#35–#44) so they stay lit instead of sleeping after 10s">
+                        <input type="checkbox" id="set-touchpad-always-on" />
+                        <span>Always On</span>
+                      </label>
+                      <label class="touchpad-opt-label" title="Seconds before Touchpad LEDs sleep when Always On is unchecked">
+                        <span>Stay Lit (sec):</span>
+                        <input type="number" id="set-touchpad-timeout" min="1" max="300" value="10" class="touchpad-sec-input" />
+                      </label>
                     </div>
                   </div>
 
@@ -586,19 +606,35 @@
                 </div>
                 <input type="checkbox" id="set-always-admin" />
               </label>
-              <label class="toggle-row">
-                <div>
+              <div class="toggle-row intro-settings-row">
+                <div style="flex:1;min-width:220px;">
                   <strong>Startup Keyboard Intro Animation</strong>
-                  <span>Play a dynamic RGB sweep or COCKPIT matrix + Alienhead intro when the app starts</span>
+                  <span>Play Orbital Sweep, COCKPIT Matrix, or custom 10-char text + Alienhead on startup</span>
+                  <div class="intro-subcontrols">
+                    <input type="text" id="set-intro-text" maxlength="10" placeholder="Custom (max 10)" class="intro-text-input" aria-label="Custom Intro Text" />
+                    <label class="intro-speed-wrap" title="Intro Animation Speed">
+                      <span>Speed:</span>
+                      <input type="range" id="set-intro-speed" min="0" max="4" step="1" value="2" />
+                      <strong id="set-intro-speed-val">Medium</strong>
+                    </label>
+                  </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
                   <select id="set-intro-style" class="probe-dev-select" aria-label="Intro Animation Style">
                     <option value="0">Orbital RGB Sweep</option>
                     <option value="1">COCKPIT Matrix + Logo</option>
+                    <option value="2">Custom Text Matrix + Logo</option>
                   </select>
                   <button type="button" class="qs-btn" id="btn-test-intro" title="Play selected intro animation now">Preview</button>
                   <input type="checkbox" id="set-startup-intro" />
                 </div>
+              </div>
+              <label class="toggle-row">
+                <div>
+                  <strong>Low Battery Matrix Alert (&lt; 30%)</strong>
+                  <span>Blink a red low-battery icon on the keyboard matrix for 2s every 5 min when unplugged below 30%</span>
+                </div>
+                <input type="checkbox" id="set-low-batt-alert" />
               </label>
               <label class="toggle-row">
                 <div>
@@ -671,7 +707,7 @@
               </div>
             </div>
             <div class="about-laptop-showcase">
-              <img src="assets/AW18-10.png" alt="Alienware 18 Area-51 (AA18250)" class="about-laptop-img" />
+              <img src="assets/AW18-10.png" alt="Alienware 18 Area-51 (AA18250)" class="about-laptop-img" draggable="false" />
             </div>
           </div>
         </section>

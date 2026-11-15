@@ -178,6 +178,7 @@ public:
 	DWORD alwaysAdmin;
 	DWORD startupIntro;
 	DWORD introStyle;
+	DWORD introSpeed;
 	DWORD updateCheck;
 	DWORD lightsOn;
 	DWORD dimmed;
@@ -203,7 +204,13 @@ public:
 	DWORD actionLights;
 	DWORD actionTimeout;
 	DWORD wavesMode;
+	DWORD wavesColor;
+	DWORD wavesBrightness;
+	DWORD touchpadAlwaysOn;
+	DWORD touchpadTimeout;
+	DWORD lowBatteryAlert;
 
+	string introText;
 	string favoriteColors;
 
 	COLORREF customColors[16];

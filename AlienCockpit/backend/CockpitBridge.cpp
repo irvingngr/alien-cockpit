@@ -313,7 +313,21 @@ std::string CockpitBridge::BuildFullStateJson() {
     settings["alwaysAdmin"] = (conf->alwaysAdmin != 0);
     settings["startupIntro"] = (conf->startupIntro != 0);
     settings["introStyle"] = static_cast<int>(conf->introStyle);
+    settings["introSpeed"] = static_cast<int>(conf->introSpeed);
+    settings["introText"] = conf->introText;
     settings["wavesMode"] = (conf->wavesMode != 0);
+    {
+        char wHex[16]{};
+        snprintf(wHex, sizeof(wHex), "#%02x%02x%02x",
+            static_cast<unsigned>((conf->wavesColor >> 16) & 0xFF),
+            static_cast<unsigned>((conf->wavesColor >> 8) & 0xFF),
+            static_cast<unsigned>(conf->wavesColor & 0xFF));
+        settings["wavesColor"] = std::string(wHex);
+    }
+    settings["wavesBrightness"] = static_cast<int>(conf->wavesBrightness);
+    settings["touchpadAlwaysOn"] = (conf->touchpadAlwaysOn != 0);
+    settings["touchpadTimeout"] = static_cast<int>(conf->touchpadTimeout);
+    settings["lowBatteryAlert"] = (conf->lowBatteryAlert != 0);
     settings["isAdmin"] = (IsUserAnAdmin() != FALSE);
     {
         SimpleJson::Value favs = SimpleJson::Value::Array();
@@ -502,6 +516,14 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
     if ((cmd == "toggleWaves" || cmd == "toggleSummer") && conf && fxhl) {
         conf->wavesMode = msg.get("enabled").asBool(false) ? 1 : 0;
+        if (msg.has("color")) {
+            byte r = 0, g = 240, b = 255;
+            HexToRgb(msg.get("color").asString("#00f0ff"), r, g, b);
+            conf->wavesColor = (static_cast<DWORD>(r) << 16) | (static_cast<DWORD>(g) << 8) | static_cast<DWORD>(b);
+        }
+        if (msg.has("brightness")) {
+            conf->wavesBrightness = static_cast<DWORD>(std::clamp(msg.get("brightness").asInt(100), 10, 100));
+        }
         if (!conf->wavesMode) {
             std::lock_guard<std::mutex> lock(g_dropMutex);
             g_waterDrops.clear();
@@ -512,6 +534,20 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         }
         g_forceFullSoftwareFrame = true;
         CockpitBridge::StepAnimatedEffects();
+        conf->Save();
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "setWavesOptions" && conf) {
+        if (msg.has("color")) {
+            byte r = 0, g = 240, b = 255;
+            HexToRgb(msg.get("color").asString("#00f0ff"), r, g, b);
+            conf->wavesColor = (static_cast<DWORD>(r) << 16) | (static_cast<DWORD>(g) << 8) | static_cast<DWORD>(b);
+        }
+        if (msg.has("brightness")) {
+            conf->wavesBrightness = static_cast<DWORD>(std::clamp(msg.get("brightness").asInt(100), 10, 100));
+        }
+        g_forceFullSoftwareFrame = true;
         conf->Save();
         return BuildFullStateJson();
     }
@@ -864,6 +900,14 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     }
 
     if (cmd == "testIntro") {
+        if (conf) {
+            if (msg.has("speed")) conf->introSpeed = static_cast<DWORD>(std::clamp(msg.get("speed").asInt(2), 0, 4));
+            if (msg.has("text")) {
+                std::string t = TrimWhitespace(msg.get("text").asString());
+                if (t.size() > 10) t.resize(10);
+                if (!t.empty()) conf->introText = t;
+            }
+        }
         int style = msg.has("style") ? msg.get("style").asInt(-1) : -1;
         CockpitBridge::TriggerStartupIntro(style);
         return "{\"ok\":true}";
@@ -1331,7 +1375,22 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
                 StartupManager::SetStartupEnabled(true, conf->startMinimized != 0, conf->alwaysAdmin != 0);
         }
         if (msg.has("startupIntro")) conf->startupIntro = msg.get("startupIntro").asBool(true) ? 1 : 0;
-        if (msg.has("introStyle")) conf->introStyle = static_cast<DWORD>(std::clamp(msg.get("introStyle").asInt(0), 0, 1));
+        if (msg.has("introStyle")) conf->introStyle = static_cast<DWORD>(std::clamp(msg.get("introStyle").asInt(1), 0, 2));
+        if (msg.has("introSpeed")) conf->introSpeed = static_cast<DWORD>(std::clamp(msg.get("introSpeed").asInt(2), 0, 4));
+        if (msg.has("introText")) {
+            std::string t = TrimWhitespace(msg.get("introText").asString());
+            if (t.size() > 10) t.resize(10);
+            conf->introText = t.empty() ? "COCKPIT" : t;
+        }
+        if (msg.has("wavesColor")) {
+            byte r = 0, g = 240, b = 255;
+            HexToRgb(msg.get("wavesColor").asString("#00f0ff"), r, g, b);
+            conf->wavesColor = (static_cast<DWORD>(r) << 16) | (static_cast<DWORD>(g) << 8) | static_cast<DWORD>(b);
+        }
+        if (msg.has("wavesBrightness")) conf->wavesBrightness = static_cast<DWORD>(std::clamp(msg.get("wavesBrightness").asInt(100), 10, 100));
+        if (msg.has("touchpadAlwaysOn")) conf->touchpadAlwaysOn = msg.get("touchpadAlwaysOn").asBool(false) ? 1 : 0;
+        if (msg.has("touchpadTimeout")) conf->touchpadTimeout = static_cast<DWORD>(std::clamp(msg.get("touchpadTimeout").asInt(10), 1, 300));
+        if (msg.has("lowBatteryAlert")) conf->lowBatteryAlert = msg.get("lowBatteryAlert").asBool(true) ? 1 : 0;
         if (msg.has("gammaCorrection")) conf->gammaCorrection = msg.get("gammaCorrection").asBool(true) ? 1 : 0;
         if (msg.has("enableProfSwitch")) conf->enableProfSwitch = msg.get("enableProfSwitch").asBool(true) ? 1 : 0;
         if (msg.has("enableEffects")) conf->enableEffects = msg.get("enableEffects").asBool(true) ? 1 : 0;
@@ -1494,7 +1553,7 @@ void CockpitBridge::TriggerStartupIntro(int styleOverride) {
     g_probeActive = false;
     g_lastSentRgb.clear();
     g_forceFullSoftwareFrame = true;
-    g_activeIntroStyle = (styleOverride >= 0) ? std::clamp(styleOverride, 0, 1) : static_cast<int>(conf->introStyle);
+    g_activeIntroStyle = (styleOverride >= 0) ? std::clamp(styleOverride, 0, 2) : std::clamp(static_cast<int>(conf->introStyle), 0, 2);
     g_introActive = true;
     g_introStartMs = GetTickCount64();
 }
@@ -1535,26 +1594,107 @@ bool CockpitBridge::IsWavesModeActive() {
     return active;
 }
 
-static bool SampleCockpitBannerPixel(int col, int row, double scrollCol) {
-    if (col < 0 || col > 19 || row < 0 || row > 4) return false;
-    // 5x5 bitmap glyphs for C, O, C, K, P, I, T
-    static const unsigned char kGlyphs[6][5] = {
-        { 0x0E, 0x10, 0x10, 0x10, 0x0E }, // 0: C
-        { 0x0E, 0x11, 0x11, 0x11, 0x0E }, // 1: O
-        { 0x11, 0x12, 0x1C, 0x12, 0x11 }, // 2: K
-        { 0x1E, 0x11, 0x1E, 0x10, 0x10 }, // 3: P
-        { 0x1F, 0x04, 0x04, 0x04, 0x1F }, // 4: I
-        { 0x1F, 0x04, 0x04, 0x04, 0x04 }  // 5: T
+static void GetGlyph5x5(char ch, unsigned char outRows[5]) {
+    unsigned char uc = static_cast<unsigned char>(std::toupper(static_cast<unsigned char>(ch)));
+    static const unsigned char kAlpha[26][5] = {
+        { 0x0E, 0x11, 0x1F, 0x11, 0x11 }, // A
+        { 0x1E, 0x11, 0x1E, 0x11, 0x1E }, // B
+        { 0x0E, 0x10, 0x10, 0x10, 0x0E }, // C
+        { 0x1C, 0x12, 0x11, 0x12, 0x1C }, // D
+        { 0x1F, 0x10, 0x1E, 0x10, 0x1F }, // E
+        { 0x1F, 0x10, 0x1E, 0x10, 0x10 }, // F
+        { 0x0E, 0x10, 0x13, 0x11, 0x0E }, // G
+        { 0x11, 0x11, 0x1F, 0x11, 0x11 }, // H
+        { 0x1F, 0x04, 0x04, 0x04, 0x1F }, // I
+        { 0x07, 0x02, 0x02, 0x12, 0x0C }, // J
+        { 0x11, 0x12, 0x1C, 0x12, 0x11 }, // K
+        { 0x10, 0x10, 0x10, 0x10, 0x1F }, // L
+        { 0x11, 0x1B, 0x15, 0x11, 0x11 }, // M
+        { 0x11, 0x19, 0x15, 0x13, 0x11 }, // N
+        { 0x0E, 0x11, 0x11, 0x11, 0x0E }, // O
+        { 0x1E, 0x11, 0x1E, 0x10, 0x10 }, // P
+        { 0x0E, 0x11, 0x15, 0x12, 0x0D }, // Q
+        { 0x1E, 0x11, 0x1E, 0x12, 0x11 }, // R
+        { 0x0F, 0x10, 0x0E, 0x01, 0x1E }, // S
+        { 0x1F, 0x04, 0x04, 0x04, 0x04 }, // T
+        { 0x11, 0x11, 0x11, 0x11, 0x0E }, // U
+        { 0x11, 0x11, 0x11, 0x0A, 0x04 }, // V
+        { 0x11, 0x11, 0x15, 0x1B, 0x11 }, // W
+        { 0x11, 0x0A, 0x04, 0x0A, 0x11 }, // X
+        { 0x11, 0x0A, 0x04, 0x04, 0x04 }, // Y
+        { 0x1F, 0x02, 0x04, 0x08, 0x1F }  // Z
     };
-    static const int kText[] = { 0, 1, 0, 2, 3, 4, 5 }; // C O C K P I T (7 * 6 - 1 = 41 cols)
+    static const unsigned char kDigits[10][5] = {
+        { 0x0E, 0x13, 0x15, 0x19, 0x0E }, // 0
+        { 0x04, 0x0C, 0x04, 0x04, 0x0E }, // 1
+        { 0x1E, 0x01, 0x0E, 0x10, 0x1F }, // 2
+        { 0x1E, 0x01, 0x0E, 0x01, 0x1E }, // 3
+        { 0x11, 0x11, 0x1F, 0x01, 0x01 }, // 4
+        { 0x1F, 0x10, 0x1E, 0x01, 0x1E }, // 5
+        { 0x0F, 0x10, 0x1E, 0x11, 0x0E }, // 6
+        { 0x1F, 0x01, 0x02, 0x04, 0x04 }, // 7
+        { 0x0E, 0x11, 0x0E, 0x11, 0x0E }, // 8
+        { 0x0E, 0x11, 0x0F, 0x01, 0x1E }  // 9
+    };
+    if (uc >= 'A' && uc <= 'Z') {
+        for (int r = 0; r < 5; ++r) outRows[r] = kAlpha[uc - 'A'][r];
+    } else if (uc >= '0' && uc <= '9') {
+        for (int r = 0; r < 5; ++r) outRows[r] = kDigits[uc - '0'][r];
+    } else if (uc == '-') {
+        outRows[0] = 0x00; outRows[1] = 0x00; outRows[2] = 0x1F; outRows[3] = 0x00; outRows[4] = 0x00;
+    } else if (uc == '_') {
+        outRows[0] = 0x00; outRows[1] = 0x00; outRows[2] = 0x00; outRows[3] = 0x00; outRows[4] = 0x1F;
+    } else if (uc == '!') {
+        outRows[0] = 0x04; outRows[1] = 0x04; outRows[2] = 0x04; outRows[3] = 0x00; outRows[4] = 0x04;
+    } else if (uc == '.') {
+        outRows[0] = 0x00; outRows[1] = 0x00; outRows[2] = 0x00; outRows[3] = 0x00; outRows[4] = 0x04;
+    } else if (uc == '+') {
+        outRows[0] = 0x00; outRows[1] = 0x04; outRows[2] = 0x0E; outRows[3] = 0x04; outRows[4] = 0x00;
+    } else {
+        for (int r = 0; r < 5; ++r) outRows[r] = 0x00;
+    }
+}
+
+static bool SampleBannerTextPixel(int col, int row, double scrollCol, const std::string& text) {
+    if (col < 0 || col > 19 || row < 0 || row > 4 || text.empty()) return false;
+    int totalCols = static_cast<int>(text.size()) * 6 - 1;
     int relCol = static_cast<int>(std::lround(col - scrollCol));
-    if (relCol < 0 || relCol >= 41) return false;
+    if (relCol < 0 || relCol >= totalCols) return false;
     int chIdx = relCol / 6;
     int glyphCol = relCol % 6;
-    if (glyphCol >= 5) return false;
-    int gId = kText[chIdx];
-    unsigned char mask = kGlyphs[gId][row];
-    return ((mask >> (4 - glyphCol)) & 1) != 0;
+    if (glyphCol >= 5 || chIdx < 0 || chIdx >= static_cast<int>(text.size())) return false;
+    unsigned char rows[5]{};
+    GetGlyph5x5(text[chIdx], rows);
+    return ((rows[row] >> (4 - glyphCol)) & 1) != 0;
+}
+
+static int SampleLowBatteryIconPixel(int col, int row) {
+    // 12x4 red low-battery icon centered at cols 4..15, rows 1..4
+    if (row < 1 || row > 4 || col < 4 || col > 15) return 0;
+    if (col == 15) return (row == 2 || row == 3) ? 1 : 0; // Battery terminal nub
+    if (row == 1 || row == 4 || col == 4 || col == 14) return 1; // Battery outline
+    if (col == 5 || col == 6) return 2; // Low charge red bar
+    return 0;
+}
+
+static void GetChassisV4XY(byte lid, double& nx, double& ny) {
+    if (lid <= 30) {
+        nx = static_cast<double>(lid) / 30.0;
+        ny = 0.0;
+    } else if (lid >= 35 && lid <= 44) {
+        nx = static_cast<double>(lid - 35) / 9.0;
+        ny = 1.0;
+    } else if (lid == 31) {
+        nx = 0.5; ny = 0.2;
+    } else if (lid == 32) {
+        nx = 0.5; ny = 0.35;
+    } else if (lid == 33) {
+        nx = 0.85; ny = 0.5;
+    } else if (lid == 34) {
+        nx = 0.15; ny = 0.5;
+    } else {
+        nx = 0.5; ny = 0.5;
+    }
 }
 
 static int SampleAlienheadPixel(int col, int row) {
@@ -1586,7 +1726,14 @@ void CockpitBridge::StepAnimatedEffects() {
 
     if (g_introActive) {
         ULONGLONG elapsed = (nowMs >= g_introStartMs) ? (nowMs - g_introStartMs) : 0;
-        double durMs = (g_activeIntroStyle == 1) ? 3800.0 : 2600.0;
+        static const double kIntroSpeedMult[5] = { 1.80, 1.35, 1.00, 0.68, 0.45 };
+        int spdIdx = std::clamp(static_cast<int>(conf->introSpeed), 0, 4);
+        std::string bannerText = (g_activeIntroStyle == 2 && !conf->introText.empty()) ? conf->introText : "COCKPIT";
+        if (bannerText.size() > 10) bannerText.resize(10);
+        double baseDurMs = (g_activeIntroStyle >= 1)
+            ? (2200.0 + static_cast<double>(bannerText.size()) * 230.0)
+            : 2600.0;
+        double durMs = baseDurMs * kIntroSpeedMult[spdIdx];
         double p = static_cast<double>(elapsed) / durMs;
         if (p < 1.0) {
             bool introUpdated = false;
@@ -1617,13 +1764,14 @@ void CockpitBridge::StepAnimatedEffects() {
                     AlienFX_SDK::Afx_action frame{};
                     frame.type = AlienFX_SDK::AlienFX_A_Color;
 
-                    if (g_activeIntroStyle == 1) {
+                    if (g_activeIntroStyle >= 1) {
                         int col = static_cast<int>(std::lround(nx * 19.0));
                         int row = static_cast<int>(std::lround(ny * 5.0));
                         if (p < 0.72) {
                             double sp = p / 0.72;
-                            double scrollCol = 20.0 - sp * 61.0; // 20 -> -41
-                            bool lit = SampleCockpitBannerPixel(col, row, scrollCol);
+                            double totalCols = static_cast<double>(bannerText.size() * 6 - 1);
+                            double scrollCol = 20.0 - sp * (20.0 + totalCols);
+                            bool lit = SampleBannerTextPixel(col, row, scrollCol, bannerText);
                             double scanBar = (row == 5) ? (0.35 + 0.65 * (0.5 + 0.5 * std::sin(p * 18.0 - col * 0.45))) : 0.0;
                             if (lit) {
                                 double hue = 185.0 + 95.0 * (nx * 0.7 + sp * 0.3);
@@ -1701,12 +1849,99 @@ void CockpitBridge::StepAnimatedEffects() {
     }
 
     // Snapshot active water drops outside lock so global Waves Mode stays zero-contention
+    static bool s_lowBattActive = false;
+    static ULONGLONG s_lowBattStartMs = 0;
+    static ULONGLONG s_lastLowBattTriggerMs = 0;
+    static ULONGLONG s_lastPowerPollMs = 0;
+    static bool s_lowBattCondition = false;
+
+    if (conf->lowBatteryAlert) {
+        if (s_lastPowerPollMs == 0 || (nowMs - s_lastPowerPollMs) >= 2000) {
+            s_lastPowerPollMs = nowMs;
+            SYSTEM_POWER_STATUS sps{};
+            if (GetSystemPowerStatus(&sps)) {
+                s_lowBattCondition = (sps.ACLineStatus == 0 && sps.BatteryLifePercent < 30 && sps.BatteryLifePercent != 255);
+            }
+        }
+        if (s_lowBattCondition && !s_lowBattActive &&
+            (s_lastLowBattTriggerMs == 0 || (nowMs - s_lastLowBattTriggerMs) >= 300000)) {
+            s_lowBattActive = true;
+            s_lowBattStartMs = nowMs;
+            s_lastLowBattTriggerMs = nowMs;
+            g_lastSentRgb.clear();
+            g_forceFullSoftwareFrame = true;
+        }
+    } else {
+        s_lowBattActive = false;
+        s_lowBattCondition = false;
+    }
+
+    if (s_lowBattActive) {
+        ULONGLONG elapsed = (nowMs >= s_lowBattStartMs) ? (nowMs - s_lowBattStartMs) : 0;
+        if (elapsed < 2000) {
+            bool blinkOn = ((elapsed / 250) % 2) == 0;
+            bool battUpdated = false;
+            for (const auto& dev : conf->afx_dev.fxdevs) {
+                if (!dev.present || !dev.dev) continue;
+                if (dev.dev->version != AlienFX_SDK::API_V5 &&
+                    dev.dev->version != AlienFX_SDK::API_ACPI) {
+                    continue;
+                }
+                fxhl->modifyQuery.lockRead();
+                auto qIt = fxhl->devLightQuery.find(dev.pid);
+                size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                int pending = (qIt != fxhl->devLightQuery.end()) ? qIt->second.pendingUpdates : 0;
+                HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
+                fxhl->modifyQuery.unlockRead();
+                if ((qSize > 0 || pending > 0) && hEvt) SetEvent(hEvt);
+                if (pending >= 2 || qSize > 250) continue;
+
+                for (const auto& l : dev.lights) {
+                    if (l.flags & ALIENFX_FLAG_POWER) continue;
+                    double nx = 0.0, ny = 0.0;
+                    GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
+                    int col = static_cast<int>(std::lround(nx * 19.0));
+                    int row = static_cast<int>(std::lround(ny * 5.0));
+                    int cell = SampleLowBatteryIconPixel(col, row);
+
+                    AlienFX_SDK::Afx_action frame{};
+                    frame.type = AlienFX_SDK::AlienFX_A_Color;
+                    if (blinkOn && cell == 2) {
+                        frame.r = 255; frame.g = 12; frame.b = 18;
+                    } else if (blinkOn && cell == 1) {
+                        frame.r = 190; frame.g = 24; frame.b = 32;
+                    } else {
+                        frame.r = 10; frame.g = 0; frame.b = 2;
+                    }
+
+                    DWORD lgh = MAKELONG(dev.pid, l.lightid);
+                    auto lastIt = g_lastSentRgb.find(lgh);
+                    if (g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
+                        g_lastSentRgb[lgh] = frame;
+                        std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+                        fxhl->SetLight(lgh, &acts);
+                        battUpdated = true;
+                    }
+                }
+            }
+            if (battUpdated) fxhl->QueryUpdate();
+            g_forceFullSoftwareFrame = false;
+            return;
+        }
+        s_lowBattActive = false;
+        g_lastSentRgb.clear();
+        g_forceFullSoftwareFrame = true;
+        fxhl->deferV5Refresh = true;
+        fxhl->Refresh(true);
+        fxhl->deferV5Refresh = false;
+    }
+
     std::vector<WaterDrop> dropsSnapshot;
     {
         std::lock_guard<std::mutex> lock(g_dropMutex);
         g_waterDrops.erase(
             std::remove_if(g_waterDrops.begin(), g_waterDrops.end(),
-                [nowMs](const WaterDrop& d) { return (nowMs - d.startMs) > 2000; }),
+                [nowMs](const WaterDrop& d) { return (nowMs - d.startMs) > 2200; }),
             g_waterDrops.end());
         dropsSnapshot = g_waterDrops;
     }
@@ -1738,9 +1973,18 @@ void CockpitBridge::StepAnimatedEffects() {
         return std::clamp(waveEnergy, 0.0, 1.0);
     };
 
+    double wbScale = std::clamp(static_cast<double>(conf->wavesBrightness), 10.0, 100.0) / 100.0;
     AlienFX_SDK::Afx_action waveCrest{};
     waveCrest.type = AlienFX_SDK::AlienFX_A_Color;
-    waveCrest.r = 215; waveCrest.g = 250; waveCrest.b = 255;
+    waveCrest.r = static_cast<byte>(std::lround(((conf->wavesColor >> 16) & 0xFF) * wbScale));
+    waveCrest.g = static_cast<byte>(std::lround(((conf->wavesColor >> 8) & 0xFF) * wbScale));
+    waveCrest.b = static_cast<byte>(std::lround((conf->wavesColor & 0xFF) * wbScale));
+
+    static ULONGLONG s_lastV4FrameMs = 0;
+    static ULONGLONG s_lastTouchpadKeepAliveMs = 0;
+    bool allowV4Frame = (nowMs - s_lastV4FrameMs) >= 66;
+    bool touchpadKeepAliveTick = (conf->touchpadAlwaysOn != 0) && ((nowMs - s_lastTouchpadKeepAliveMs) >= 2000);
+    bool v4AnySent = false;
 
     bool anyUpdated = false;
     bool anyDevSkipped = false;
@@ -1752,7 +1996,8 @@ void CockpitBridge::StepAnimatedEffects() {
     for (const auto& ls : conf->activeProfile->lightsets) {
         if (ls.color.empty()) continue;
         byte effType = ls.color[0].type;
-        if (effType == AlienFX_SDK::AlienFX_A_Color && !isFading && !needWavePass) continue;
+        bool isStaticLs = (effType == AlienFX_SDK::AlienFX_A_Color);
+        if (isStaticLs && !isFading && !needWavePass && !touchpadKeepAliveTick) continue;
 
         AlienFX_SDK::Afx_group* grp = conf->afx_dev.GetGroupById(ls.group);
         if (!grp || grp->lights.empty()) continue;
@@ -1769,9 +2014,17 @@ void CockpitBridge::StepAnimatedEffects() {
         for (const auto& gl : grp->lights) {
             AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(gl.did);
             if (!dev || !dev->present || !dev->dev) continue;
-            // Drive only API_V5 / API_ACPI in software; API_V4/V6 use native hardware engines
-            if (dev->dev->version != AlienFX_SDK::API_V5 &&
+            bool isV4 = (dev->dev->version == AlienFX_SDK::API_V4);
+            if (!isV4 &&
+                dev->dev->version != AlienFX_SDK::API_V5 &&
                 dev->dev->version != AlienFX_SDK::API_ACPI) {
+                continue;
+            }
+            bool isTouchpadLed = (isV4 && gl.lid >= 35 && gl.lid <= 44);
+            if (isStaticLs && !isFading && !needWavePass && !(touchpadKeepAliveTick && isTouchpadLed)) {
+                continue;
+            }
+            if (isV4 && !allowV4Frame && !finalSettleFrame && !(touchpadKeepAliveTick && isTouchpadLed)) {
                 continue;
             }
             // Never drive hardware Power Button indicator in software loop
@@ -1790,7 +2043,9 @@ void CockpitBridge::StepAnimatedEffects() {
                 if ((qSize > 0 || pending > 0) && hEvt) {
                     SetEvent(hEvt);
                 }
-                bool skipDev = (!finalSettleFrame && pending >= 2) || (qSize > 250);
+                bool skipDev = isV4
+                    ? ((!finalSettleFrame && pending >= 1) || (qSize > 80))
+                    : ((!finalSettleFrame && pending >= 2) || (qSize > 250));
                 if (skipDev) anyDevSkipped = true;
                 busyIt = devBusy.emplace(dev->pid, skipDev).first;
             }
@@ -1799,7 +2054,11 @@ void CockpitBridge::StepAnimatedEffects() {
             }
 
             double nx = 0.0, ny = 0.0;
-            GetDarfonKeyXY(static_cast<byte>(gl.lid), nx, ny);
+            if (isV4) {
+                GetChassisV4XY(static_cast<byte>(gl.lid), nx, ny);
+            } else {
+                GetDarfonKeyXY(static_cast<byte>(gl.lid), nx, ny);
+            }
 
             AlienFX_SDK::Afx_action frame{};
             frame.type = AlienFX_SDK::AlienFX_A_Color;
@@ -1838,14 +2097,27 @@ void CockpitBridge::StepAnimatedEffects() {
                 double hue = std::fmod(nowSec * cyclesPerSec * 120.0, 360.0);
                 HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
             } else if (effType == AlienFX_SDK::AlienFX_A_Rainbow) {
-                double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0 + ny * 35.0, 360.0);
-                HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
+                if (isV4) {
+                    // Back-and-forth scanner + color flow across Rear Lightbar (#0..#30) and Touchpad (#35..#44)
+                    double scanPos = 0.5 - 0.5 * std::cos(angle * 0.85);
+                    double dist = std::fabs(nx - scanPos);
+                    double beam = std::exp(-(dist * dist) / 0.018);
+                    double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0, 360.0);
+                    AlienFX_SDK::Afx_action rainbowCol{};
+                    HsvToRgb(hue, 1.0, 1.0, rainbowCol.r, rainbowCol.g, rainbowCol.b);
+                    AlienFX_SDK::Afx_action baseCol = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1 : rainbowCol;
+                    AlienFX_SDK::Afx_action dimBg{ static_cast<byte>(baseCol.r / 8), static_cast<byte>(baseCol.g / 8), static_cast<byte>(baseCol.b / 8) };
+                    frame = LerpColor(dimBg, rainbowCol, beam);
+                } else {
+                    double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0 + ny * 35.0, 360.0);
+                    HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
+                }
             } else {
                 frame = c1;
                 frame.type = AlienFX_SDK::AlienFX_A_Color;
             }
 
-            if (hasDrops) {
+            if (hasDrops && !isV4) {
                 double we = computeWaveEnergy(nx, ny, 0.5);
                 if (we > 0.002) {
                     frame = LerpColor(frame, waveCrest, we);
@@ -1860,15 +2132,20 @@ void CockpitBridge::StepAnimatedEffects() {
 
             updatedLights.insert(gl.lgh);
             auto lastIt = g_lastSentRgb.find(gl.lgh);
-            if (finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
+            bool forceKeepAlive = (touchpadKeepAliveTick && isTouchpadLed);
+            if (forceKeepAlive || finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
                 g_lastSentRgb[gl.lgh] = frame;
                 std::vector<AlienFX_SDK::Afx_action> acts{ frame };
                 fxhl->SetLight(gl.lgh, &acts);
                 anyUpdated = true;
+                if (isV4) v4AnySent = true;
             }
         }
     }
     conf->modifyProfile.unlockRead();
+
+    if (v4AnySent) s_lastV4FrameMs = nowMs;
+    if (touchpadKeepAliveTick) s_lastTouchpadKeepAliveMs = nowMs;
 
     if (needWavePass) {
         for (const auto& dev : conf->afx_dev.fxdevs) {

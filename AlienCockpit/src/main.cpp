@@ -498,6 +498,49 @@ static void EnsureDefaultDeviceMappings() {
     }
 }
 
+static void EnsureDefaultAuroraProfile() {
+    if (!conf || !conf->activeProfile) return;
+    if (conf->activeProfile->id != 0 || !conf->activeProfile->lightsets.empty()) return;
+
+    DWORD nextGid = 0x10001;
+    for (const auto& g : conf->afx_dev.GetGroups()) {
+        if (g.gid >= nextGid) nextGid = g.gid + 1;
+    }
+
+    AlienFX_SDK::Afx_group grp{};
+    grp.gid = nextGid;
+    grp.name = "All Devices (Aurora)";
+    for (const auto& dev : conf->afx_dev.fxdevs) {
+        for (const auto& l : dev.lights) {
+            if (l.flags & ALIENFX_FLAG_POWER) continue;
+            AlienFX_SDK::Afx_groupLight gl{};
+            gl.did = dev.pid;
+            gl.lid = l.lightid;
+            grp.lights.push_back(gl);
+        }
+    }
+    if (grp.lights.empty()) return;
+
+    conf->afx_dev.GetGroups().push_back(grp);
+    conf->afx_dev.SaveMappings();
+
+    groupset gs{};
+    gs.group = static_cast<int>(grp.gid);
+    gs.fromColor = true;
+    gs.brightness = 100;
+    gs.baseColor = { 255, 240, 0, 255 }; // BGRA: #00F0FF
+    gs.color = {
+        { AlienFX_SDK::AlienFX_A_Rainbow, 50, 0, 0, 240, 255 },   // #00F0FF
+        { AlienFX_SDK::AlienFX_A_Rainbow, 50, 0, 123, 44, 191 },  // #7B2CBF
+        { AlienFX_SDK::AlienFX_A_Rainbow, 50, 0, 255, 0, 127 }    // #FF007F
+    };
+
+    conf->modifyProfile.lockWrite();
+    conf->activeProfile->lightsets.push_back(std::move(gs));
+    conf->modifyProfile.unlockWrite();
+    conf->Save();
+}
+
 static void InitTrayIcon(HWND hwnd) {
     g_nid.cbSize = sizeof(NOTIFYICONDATAW);
     g_nid.hWnd = hwnd;
@@ -923,6 +966,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     }
     conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr);
     EnsureDefaultDeviceMappings();
+    EnsureDefaultAuroraProfile();
     fxhl->Start();
     eve->StartProfiles();
 
