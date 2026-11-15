@@ -50,6 +50,7 @@ struct CrossfadeState {
 };
 static std::unordered_map<DWORD, AlienFX_SDK::Afx_action> g_lastSentRgb;
 static CrossfadeState g_crossfade;
+static bool g_forceFullSoftwareFrame = true;
 
 static std::string TrimWhitespace(const std::string& s) {
     size_t start = s.find_first_not_of(" \t\r\n");
@@ -454,6 +455,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         conf->lightsOn = msg.get("on").asBool(true) ? 1 : 0;
         fxhl->SetState(true);
         if (conf->lightsOn) {
+            g_forceFullSoftwareFrame = true;
             fxhl->ClearAndRefresh(true);
         }
         conf->Save();
@@ -470,6 +472,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             fxhl->ClearAndRefresh(true);
             fxhl->deferV5Refresh = false;
         }
+        g_forceFullSoftwareFrame = true;
         CockpitBridge::StepAnimatedEffects();
         conf->Save();
         return BuildFullStateJson();
@@ -812,6 +815,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     if (cmd == "endProbe" && conf && fxhl) {
         g_probeActive = false;
         fxhl->oldtest = -1;
+        g_forceFullSoftwareFrame = true;
         BeginCrossfade(500);
         fxhl->SetState(true);
         fxhl->deferV5Refresh = true;
@@ -1357,6 +1361,8 @@ static void VkToKeyXY(DWORD vk, double& nx, double& ny) {
 void CockpitBridge::TriggerStartupIntro(int styleOverride) {
     if (!conf || !conf->lightsOn || !conf->stateOn) return;
     g_probeActive = false;
+    g_lastSentRgb.clear();
+    g_forceFullSoftwareFrame = true;
     g_activeIntroStyle = (styleOverride >= 0) ? std::clamp(styleOverride, 0, 1) : static_cast<int>(conf->introStyle);
     g_introActive = true;
     g_introStartMs = GetTickCount64();
@@ -1371,7 +1377,8 @@ void CockpitBridge::NotifyKeyPress(unsigned long vkCode) {
     double kx = 0.5, ky = 0.5;
     VkToKeyXY(static_cast<DWORD>(vkCode), kx, ky);
 
-    std::lock_guard<std::mutex> lock(g_dropMutex);
+    std::unique_lock<std::mutex> lock(g_dropMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     g_waterDrops.erase(
         std::remove_if(g_waterDrops.begin(), g_waterDrops.end(),
             [nowMs](const WaterDrop& d) { return (nowMs - d.startMs) > 2200; }),
@@ -1439,6 +1446,10 @@ void CockpitBridge::StepAnimatedEffects() {
     if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return;
     if (g_probeActive) return;
 
+    auto sameFrame = [](const AlienFX_SDK::Afx_action& a, const AlienFX_SDK::Afx_action& b) -> bool {
+        return a.r == b.r && a.g == b.g && a.b == b.b;
+    };
+
     ULONGLONG nowMs = GetTickCount64();
     double nowSec = static_cast<double>(nowMs) / 1000.0;
 
@@ -1448,6 +1459,7 @@ void CockpitBridge::StepAnimatedEffects() {
         double p = static_cast<double>(elapsed) / durMs;
         if (p < 1.0) {
             bool introUpdated = false;
+            bool anyIntroSkipped = false;
             for (const auto& dev : conf->afx_dev.fxdevs) {
                 if (!dev.present || !dev.dev) continue;
                 if (dev.dev->version != AlienFX_SDK::API_V5 &&
@@ -1457,10 +1469,14 @@ void CockpitBridge::StepAnimatedEffects() {
                 fxhl->modifyQuery.lockRead();
                 auto qIt = fxhl->devLightQuery.find(dev.pid);
                 size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                int pending = (qIt != fxhl->devLightQuery.end()) ? qIt->second.pendingUpdates : 0;
                 HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
                 fxhl->modifyQuery.unlockRead();
-                if (qSize > 0 && hEvt) SetEvent(hEvt);
-                if (qSize > 16) continue;
+                if ((qSize > 0 || pending > 0) && hEvt) SetEvent(hEvt);
+                if (pending >= 2 || qSize > 250) {
+                    anyIntroSkipped = true;
+                    continue;
+                }
 
                 for (const auto& l : dev.lights) {
                     if (l.flags & ALIENFX_FLAG_POWER) continue;
@@ -1519,6 +1535,10 @@ void CockpitBridge::StepAnimatedEffects() {
                     }
 
                     DWORD lgh = MAKELONG(dev.pid, l.lightid);
+                    auto lastIt = g_lastSentRgb.find(lgh);
+                    if (!g_forceFullSoftwareFrame && lastIt != g_lastSentRgb.end() && sameFrame(lastIt->second, frame)) {
+                        continue;
+                    }
                     g_lastSentRgb[lgh] = frame;
                     std::vector<AlienFX_SDK::Afx_action> acts{ frame };
                     fxhl->SetLight(lgh, &acts);
@@ -1528,9 +1548,13 @@ void CockpitBridge::StepAnimatedEffects() {
             if (introUpdated) {
                 fxhl->QueryUpdate();
             }
+            if (!anyIntroSkipped && g_forceFullSoftwareFrame) {
+                g_forceFullSoftwareFrame = false;
+            }
             return;
         }
         g_introActive = false;
+        g_forceFullSoftwareFrame = true;
         BeginCrossfade(650);
     }
 
@@ -1588,6 +1612,7 @@ void CockpitBridge::StepAnimatedEffects() {
     waveCrest.r = 215; waveCrest.g = 250; waveCrest.b = 255;
 
     bool anyUpdated = false;
+    bool anyDevSkipped = false;
     bool finalSettleFrame = (isFading && fadeT >= 1.0) || settleWaves;
     std::unordered_map<WORD, bool> devBusy;
     std::unordered_set<DWORD> updatedLights;
@@ -1628,12 +1653,14 @@ void CockpitBridge::StepAnimatedEffects() {
                 fxhl->modifyQuery.lockRead();
                 auto qIt = fxhl->devLightQuery.find(dev->pid);
                 size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                int pending = (qIt != fxhl->devLightQuery.end()) ? qIt->second.pendingUpdates : 0;
                 HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
                 fxhl->modifyQuery.unlockRead();
-                if (qSize > 0 && hEvt) {
+                if ((qSize > 0 || pending > 0) && hEvt) {
                     SetEvent(hEvt);
                 }
-                bool skipDev = (!finalSettleFrame && qSize > 12) || (qSize > 250);
+                bool skipDev = (!finalSettleFrame && pending >= 2) || (qSize > 250);
+                if (skipDev) anyDevSkipped = true;
                 busyIt = devBusy.emplace(dev->pid, skipDev).first;
             }
             if (busyIt->second) {
@@ -1701,10 +1728,13 @@ void CockpitBridge::StepAnimatedEffects() {
             }
 
             updatedLights.insert(gl.lgh);
-            g_lastSentRgb[gl.lgh] = frame;
-            std::vector<AlienFX_SDK::Afx_action> acts{ frame };
-            fxhl->SetLight(gl.lgh, &acts);
-            anyUpdated = true;
+            auto lastIt = g_lastSentRgb.find(gl.lgh);
+            if (finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
+                g_lastSentRgb[gl.lgh] = frame;
+                std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+                fxhl->SetLight(gl.lgh, &acts);
+                anyUpdated = true;
+            }
         }
     }
     conf->modifyProfile.unlockRead();
@@ -1721,10 +1751,12 @@ void CockpitBridge::StepAnimatedEffects() {
                 fxhl->modifyQuery.lockRead();
                 auto qIt = fxhl->devLightQuery.find(dev.pid);
                 size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                int pending = (qIt != fxhl->devLightQuery.end()) ? qIt->second.pendingUpdates : 0;
                 HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
                 fxhl->modifyQuery.unlockRead();
-                if (qSize > 0 && hEvt) SetEvent(hEvt);
-                bool skipDev = (!finalSettleFrame && qSize > 12) || (qSize > 250);
+                if ((qSize > 0 || pending > 0) && hEvt) SetEvent(hEvt);
+                bool skipDev = (!finalSettleFrame && pending >= 2) || (qSize > 250);
+                if (skipDev) anyDevSkipped = true;
                 busyIt = devBusy.emplace(dev.pid, skipDev).first;
             }
             if (busyIt->second) continue;
@@ -1749,10 +1781,13 @@ void CockpitBridge::StepAnimatedEffects() {
                     AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
                     frame = LerpColor(prev, frame, fadeT);
                 }
-                g_lastSentRgb[lgh] = frame;
-                std::vector<AlienFX_SDK::Afx_action> acts{ frame };
-                fxhl->SetLight(lgh, &acts);
-                anyUpdated = true;
+                auto lastIt = g_lastSentRgb.find(lgh);
+                if (finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
+                    g_lastSentRgb[lgh] = frame;
+                    std::vector<AlienFX_SDK::Afx_action> acts{ frame };
+                    fxhl->SetLight(lgh, &acts);
+                    anyUpdated = true;
+                }
             }
         }
     }
@@ -1760,6 +1795,9 @@ void CockpitBridge::StepAnimatedEffects() {
 
     if (anyUpdated) {
         fxhl->QueryUpdate();
+    }
+    if (!anyDevSkipped && g_forceFullSoftwareFrame) {
+        g_forceFullSoftwareFrame = false;
     }
     if (isFading && fadeT >= 1.0) {
         g_crossfade.active = false;

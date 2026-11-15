@@ -148,7 +148,7 @@
                 </div>
               </div>
 
-              <!-- Mouse Interactive SVG Map (AWCC 3-Zone: Side Strips & Wheel, DPI Indicator, Mouse Logo) -->
+              <!-- Mouse Interactive SVG Map (AW610M Canonical 2-Zone: 0 = Side Strips & Wheel, 1 = Mouse Logo) -->
               <div class="device-canvas" id="view-mouse">
                 <div class="mouse-stage">
                   <svg viewBox="0 0 320 440" class="mouse-svg" id="mouse-svg">
@@ -168,24 +168,22 @@
                     <line x1="160" y1="48" x2="160" y2="165" stroke="#1e2a42" stroke-width="2"/>
                     <path d="M84,165 Q160,178 236,165" fill="none" stroke="#1e2a42" stroke-width="2"/>
 
-                    <!-- Zone 1: Side Strips & Wheel (AWCC Zone 1) -->
-                    <g class="mouse-zone" data-zone-id="1" data-zone-name="Side Strips &amp; Wheel">
+                    <!-- Zone 0: Side Strips & Wheel -->
+                    <g class="mouse-zone" data-zone-id="0" data-zone-name="Side Strips &amp; Wheel">
                       <rect class="mouse-paint" x="148" y="82" width="24" height="48" rx="10" fill="#1e293b"/>
                       <path class="mouse-stroke" d="M78,195 C72,250 74,310 92,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
                       <path class="mouse-stroke" d="M242,195 C248,250 246,310 228,352" fill="none" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
                     </g>
 
-                    <!-- Zone 3: DPI Indicator (AWCC Zone 3) -->
-                    <rect class="mouse-zone mouse-paint" data-zone-id="3" data-zone-name="DPI Indicator"
-                          x="151" y="142" width="18" height="18" rx="4"
-                          fill="#1e293b"/>
+                    <!-- Non-RGB Hardware DPI Status LED (Hardware Indicator Only) -->
+                    <rect x="151" y="142" width="18" height="18" rx="4" fill="#121a2b" stroke="#1e2a42" stroke-width="1"/>
 
-                    <!-- Zone 2: Mouse Logo (AWCC Zone 2) -->
-                    <polygon class="mouse-zone mouse-paint" data-zone-id="2" data-zone-name="Mouse Logo"
+                    <!-- Zone 1: Mouse Logo -->
+                    <polygon class="mouse-zone mouse-paint" data-zone-id="1" data-zone-name="Mouse Logo"
                              points="160,255 186,285 174,325 146,325 134,285"
                              fill="#1e293b"/>
                   </svg>
-                  <div class="mouse-legend" id="mouse-zone-label">Click any AWCC mouse zone (Logo, DPI Indicator, or Side Strips)</div>
+                  <div class="mouse-legend" id="mouse-zone-label">Click any AW610M mouse zone (Logo or Side Strips &amp; Wheel)</div>
                 </div>
               </div>
 
@@ -558,7 +556,7 @@
           <div class="card about-card">
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div>
-              <h3>AlienCockpit v1.0.9 — AWCC Alternative</h3>
+              <h3>AlienCockpit v1.0.10 — AWCC Alternative</h3>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
               <div class="credits-author">
                 <span>Crafted by <strong>Irving Ngr</strong></span>

@@ -20,6 +20,7 @@ struct DeviceUpdateQuery {
 		   updateThread = NULL;
 	queue<LightQueryElement> lightQuery;
 	map<byte, LightQueryElement> lstate;
+	int pendingUpdates = 0;
 };
 
 struct LightQueryData {

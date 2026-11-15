@@ -2043,7 +2043,7 @@ function initLedProbeDeck() {
       if (state.probeActive) setProbeActive(false);
       sendCommand({ cmd: 'emergencyWhite' });
       const prevEl = document.getElementById('selected-names');
-      if (prevEl) prevEl.textContent = '⚡ Emergency White broadcast sent to all controllers (0..44 chassis / keyboard / mouse)';
+      if (prevEl) prevEl.textContent = '⚡ Emergency White broadcast sent to all controllers (0..255 chassis / keyboard / mouse)';
     });
   }
   if (btnDetectHw) {

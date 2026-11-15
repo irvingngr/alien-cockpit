@@ -119,9 +119,15 @@ namespace AlienFX_SDK {
 				return HidD_SetOutputReport(devHandle, buffer, length);
 			case API_V4: {
 				BOOL ok = HidD_SetOutputReport(devHandle, buffer, length);
+				if (!ok) {
+					ok = HidD_SetFeature(devHandle, buffer, length);
+				}
 				if (!ok && WriteFile(devHandle, buffer, length, &written, NULL)) {
 					ok = TRUE;
 				}
+				byte rbuf[MAX_BUFFERSIZE]{};
+				rbuf[0] = reportIDList[API_V4];
+				HidD_GetInputReport(devHandle, rbuf, length);
 				Sleep(8);
 				return ok != FALSE;
 			}
@@ -300,8 +306,12 @@ namespace AlienFX_SDK {
 					qbuf[1] = 0x03;
 					qbuf[2] = 0x20;
 					qbuf[3] = 0x02;
-					if (HidD_SetOutputReport(devHandle, qbuf, length)) {
-						Sleep(12);
+					BOOL sent = HidD_SetOutputReport(devHandle, qbuf, length);
+					if (!sent) {
+						sent = HidD_SetFeature(devHandle, qbuf, length);
+					}
+					if (sent) {
+						Sleep(50);
 						byte rbuf[MAX_BUFFERSIZE]{};
 						rbuf[0] = reportIDList[API_V4];
 						BOOL got = HidD_GetInputReport(devHandle, rbuf, length);
@@ -310,7 +320,8 @@ namespace AlienFX_SDK {
 							rbuf[0] = reportIDList[API_V4];
 							got = HidD_GetFeature(devHandle, rbuf, length);
 						}
-						if (got && rbuf[1] == 0x03 && rbuf[2] == 0x20 && (rbuf[4] || rbuf[5]) && rbuf[6] > 0 && rbuf[6] <= 128) {
+						if (got && rbuf[6] > 0 && rbuf[6] <= 128 &&
+							((rbuf[1] == 0x03 && rbuf[2] == 0x20) || (rbuf[1] == 0x20))) {
 							v4MaxZones = rbuf[6];
 						}
 					}
@@ -375,7 +386,6 @@ namespace AlienFX_SDK {
 		//	}
 		//	break;
 		case API_V7:
-			PrepareAndSend(COMMV7_status);
 			inSet = true;
 			break;
 		case API_V6:
@@ -394,13 +404,8 @@ namespace AlienFX_SDK {
 		case API_V4:
 		{
 			WaitForReady();
-			if (pid == 0x0551) {
-				PrepareAndSend(COMMV4_control, { { 4, {4, 0, 0x61} } });
-				inSet = PrepareAndSend(COMMV4_control, { { 4, {1, 0, 0x61} } });
-			} else {
-				PrepareAndSend(COMMV4_control, { { 4, {4} }/*, { 5, 0xff }*/ });
-				inSet = PrepareAndSend(COMMV4_control, { {4, {1}}/*, { 5, 0xff }*/ });
-			}
+			PrepareAndSend(COMMV4_control, { { 4, {4} }/*, { 5, 0xff }*/ });
+			inSet = PrepareAndSend(COMMV4_control, { { 4, {1} }/*, { 5, 0xff }*/ });
 		} break;
 		case API_V3: case API_V2:
 		{
@@ -423,7 +428,7 @@ namespace AlienFX_SDK {
 			//	break;
 			case API_V7:
 				inSet = !PrepareAndSend(COMMV7_update);
-				Sleep(10);
+				Sleep(25);
 				break;
 			case API_V5:
 			{
@@ -431,12 +436,8 @@ namespace AlienFX_SDK {
 			} break;
 			case API_V4:
 			{
-				if (pid == 0x0551) {
-					inSet = !PrepareAndSend(COMMV4_control, { { 4, {3, 0, 0x61} } });
-				} else {
-					inSet = !PrepareAndSend(COMMV4_control);
-				}
-				Sleep(20);
+				inSet = !PrepareAndSend(COMMV4_control);
+				Sleep(25);
 			} break;
 			case API_V3: case API_V2:
 			{
@@ -501,31 +502,22 @@ namespace AlienFX_SDK {
 			break;
 		case API_V4:
 		{
-			vector<byte> validLights = *lights;
-			byte mode = 0x00;
-			if (c.type == AlienFX_A_Pulse || c.type == AlienFX_A_Breathing) mode = 0x01;
-			else if (c.type != AlienFX_A_Color) mode = 0x02;
-			WORD durMs = (c.type == AlienFX_A_Color) ? 0x07d0 : (WORD)ClampInt((int)c.time * 40, 200, 5000);
-			WORD tempoVal = (c.type == AlienFX_A_Color) ? 0x00fa : (WORD)ClampInt((int)c.tempo, 12, 250);
 			byte r = c.r, g = c.g, b = c.b;
 			if (r == 0 && g == 0 && b == 0) { r = g = b = 1; }
-
-			for (size_t idx = 0; idx < validLights.size(); idx += 25) {
-				size_t count = (validLights.size() - idx < 25) ? (validLights.size() - idx) : 25;
-				vector<byte> chunk(validLights.begin() + idx, validLights.begin() + idx + count);
-				mods.clear();
-				mods.push_back({ 5, { (byte)count } });
-				mods.push_back({ 6, chunk });
-				PrepareAndSend(COMMV4_colorSel, &mods);
-
-				mods.clear();
-				mods.push_back({ 3, {
-					mode,
-					(byte)(durMs >> 8), (byte)(durMs & 0xff),
-					(byte)(tempoVal >> 8), (byte)(tempoVal & 0xff),
-					r, g, b
-				} });
-				val = PrepareAndSend(COMMV4_colorSet, &mods);
+			int pktCount = 0;
+			for (size_t idx = 0; idx < lights->size(); idx += 26) {
+				size_t count = (lights->size() - idx < 26) ? (lights->size() - idx) : 26;
+				vector<byte> chunk(lights->begin() + idx, lights->begin() + idx + count);
+				mods = {
+					{ 3, { r, g, b, 0, (byte)count } },
+					{ 8, chunk }
+				};
+				val = PrepareAndSend(COMMV4_setOneColor, &mods);
+				if (++pktCount >= 10 && idx + count < lights->size()) {
+					UpdateColors();
+					Reset();
+					pktCount = 0;
+				}
 			}
 		} break;
 		case API_V3: case API_V2: case API_V6: //case API_V9: 
@@ -566,9 +558,7 @@ namespace AlienFX_SDK {
 		bool val = true;
 		vector<Afx_icommand> mods;
 
-		if (!(version == API_V4 && save)) {
-			if (!inSet) Reset();
-		}
+		if (!inSet) Reset();
 		switch (version) {
 		case API_V8: {
 			PrepareAndSend(COMMV8_readyToColor, { {2,{(byte)act->size()}} });
@@ -593,14 +583,136 @@ namespace AlienFX_SDK {
 			}
 			val = PrepareAndSend(COMMV5_loop);
 		} break;
+		case API_V4:
+		{
+			vector<Afx_lightblock*> powerBlocks;
+			vector<Afx_lightblock*> animBlocks;
+			struct StaticGroup {
+				byte r, g, b;
+				vector<byte> ids;
+			};
+			vector<StaticGroup> staticGroups;
+			vector<byte> turnOnIds;
+
+			for (auto& blk : *act) {
+				if (blk.act.empty()) continue;
+				if (blk.act.front().type == AlienFX_A_Power) {
+					powerBlocks.push_back(&blk);
+					continue;
+				}
+				turnOnIds.push_back(blk.index);
+				if (blk.act.front().type == AlienFX_A_Color) {
+					byte r = blk.act.front().r, g = blk.act.front().g, b = blk.act.front().b;
+					bool found = false;
+					for (auto& sg : staticGroups) {
+						if (sg.r == r && sg.g == g && sg.b == b) {
+							sg.ids.push_back(blk.index);
+							found = true;
+							break;
+						}
+					}
+					if (!found) {
+						staticGroups.push_back({ r, g, b, { blk.index } });
+					}
+				} else {
+					animBlocks.push_back(&blk);
+				}
+			}
+
+			if (bright > 0 && !turnOnIds.empty()) {
+				byte dim = (byte)(0x64 - ClampInt(bright, 0, 100));
+				for (size_t idx = 0; idx < turnOnIds.size(); idx += 28) {
+					size_t count = (turnOnIds.size() - idx < 28) ? (turnOnIds.size() - idx) : 28;
+					vector<byte> chunk(turnOnIds.begin() + idx, turnOnIds.begin() + idx + count);
+					mods = {
+						{ 3, { dim, 0, (byte)count } },
+						{ 6, chunk }
+					};
+					PrepareAndSend(COMMV4_turnOn, &mods);
+				}
+			}
+
+			if (!inSet) Reset();
+			for (auto& sg : staticGroups) {
+				Afx_action c{ AlienFX_A_Color, 0, 0, sg.r, sg.g, sg.b };
+				val = SetMultiColor(&sg.ids, c);
+			}
+
+			if (!animBlocks.empty()) {
+				if (!staticGroups.empty()) {
+					UpdateColors();
+					Reset();
+				}
+				struct AnimGroup {
+					vector<Afx_action> acts;
+					vector<byte> ids;
+				};
+				vector<AnimGroup> ags;
+				auto sameActs = [](const vector<Afx_action>& a, const vector<Afx_action>& b) {
+					if (a.size() != b.size()) return false;
+					for (size_t i = 0; i < a.size(); ++i) {
+						if (a[i].type != b[i].type || a[i].time != b[i].time || a[i].tempo != b[i].tempo ||
+							a[i].r != b[i].r || a[i].g != b[i].g || a[i].b != b[i].b) return false;
+					}
+					return true;
+				};
+				for (auto* blk : animBlocks) {
+					if (v4MaxZones > 0 && blk->index >= v4MaxZones) continue;
+					bool placed = false;
+					for (auto& g : ags) {
+						if (g.ids.size() < 25 && sameActs(g.acts, blk->act)) {
+							g.ids.push_back(blk->index);
+							placed = true;
+							break;
+						}
+					}
+					if (!placed) {
+						ags.push_back({ blk->act, { blk->index } });
+					}
+				}
+				size_t pairCount = 0;
+				for (auto& ag : ags) {
+					if (pairCount >= 12) break;
+					mods = { { 5, { (byte)ag.ids.size() } }, { 6, ag.ids } };
+					PrepareAndSend(COMMV4_colorSel, &mods);
+					for (auto ca = ag.acts.begin(); ca != ag.acts.end();) {
+						byte lastMode = 0;
+						WORD lastDur = 0x07d0, lastTempo = 0x00fa;
+						for (byte bPos = 3; bPos + 7 < length && ca != ag.acts.end(); bPos += 8) {
+							byte mode = (ca->type == AlienFX_A_Pulse || ca->type == AlienFX_A_Breathing) ? 0x01
+								: (ca->type != AlienFX_A_Color ? 0x02 : 0x00);
+							WORD durMs = (ca->type == AlienFX_A_Color) ? 0x07d0 : (WORD)ClampInt((int)ca->time * 40, 200, 5000);
+							WORD tempoVal = (ca->type == AlienFX_A_Color) ? 0x00fa : (WORD)ClampInt((int)ca->tempo, 12, 250);
+							byte r = ca->r, g = ca->g, b = ca->b;
+							if (r == 0 && g == 0 && b == 0) r = g = b = 1;
+							mods.push_back({ bPos, { mode, (byte)(durMs >> 8), (byte)(durMs & 0xff), (byte)(tempoVal >> 8), (byte)(tempoVal & 0xff), r, g, b } });
+							lastMode = mode; lastDur = durMs; lastTempo = tempoVal;
+							ca++;
+						}
+						if (ag.acts.size() == 1 && lastMode != 0x00 && mods.size() == 1 && 11 + 7 < length) {
+							mods.push_back({ 11, { lastMode, (byte)(lastDur >> 8), (byte)(lastDur & 0xff), (byte)(lastTempo >> 8), (byte)(lastTempo & 0xff), 1, 1, 1 } });
+						}
+						val = PrepareAndSend(COMMV4_colorSet, &mods);
+					}
+					pairCount++;
+				}
+			}
+
+			UpdateColors();
+			if (save && pid != 0x0551) {
+				SaveLightsState(act);
+			}
+			save = false;
+			for (auto* pblk : powerBlocks)
+				val = SetAction(pblk);
+		} break;
 		default:
 		{
-			// Process non-power zones first, save/play 0x61 if requested, then commit any power blocks last
 			vector<Afx_lightblock*> powerBlocks;
 			for (auto nc = act->begin(); nc != act->end(); nc++) {
 				if (!nc->act.empty() && nc->act.front().type == AlienFX_A_Power)
 					powerBlocks.push_back(&(*nc));
-				else if (!(version == API_V4 && save))
+				else
 					val = SetAction(&(*nc));
 			}
 			if (save) {
@@ -689,9 +801,7 @@ namespace AlienFX_SDK {
 					mods.push_back({ ca * 3 + 8, { act->act.at(ca).r, act->act.at(ca).g, act->act.at(ca).b} });
 			}
 			bool ok = PrepareAndSend(COMMV7_control, &mods);
-			Sleep(12);
-			PrepareAndSend(COMMV7_update, { { 8, { 0, 1 } } });
-			Sleep(8);
+			Sleep(25);
 			return ok;
 		}
 		case API_V6:
@@ -705,6 +815,11 @@ namespace AlienFX_SDK {
 		case API_V4: 
 			if (act->act.front().type == AlienFX_A_Power)
 				return SetPowerAction(act);
+			if (act->act.front().type == AlienFX_A_Color) {
+				byte r = act->act.front().r, g = act->act.front().g, b = act->act.front().b;
+				if (r == 0 && g == 0 && b == 0) { r = g = b = 1; }
+				return PrepareAndSend(COMMV4_setOneColor, { { 3, { r, g, b, 0, 1, act->index } } });
+			}
 			return SetV4Action(act);
 		case API_V3: case API_V2: {
 			// check types and call
@@ -754,21 +869,71 @@ namespace AlienFX_SDK {
 			UpdateColors();
 		switch (version) {
 		case API_V4: {
+			if (pid == 0x0551) break;
 			PrepareAndSend(COMMV4_control, { { 4, {4,0,0x61} } });
 			PrepareAndSend(COMMV4_control, { { 4, {1,0,0x61} } });
+			struct SaveGroup {
+				vector<Afx_action> acts;
+				vector<byte> ids;
+			};
+			vector<SaveGroup> sgs;
+			auto sameActs = [](const vector<Afx_action>& a, const vector<Afx_action>& b) {
+				if (a.size() != b.size()) return false;
+				for (size_t i = 0; i < a.size(); ++i) {
+					if (a[i].type != b[i].type || a[i].time != b[i].time || a[i].tempo != b[i].tempo ||
+						a[i].r != b[i].r || a[i].g != b[i].g || a[i].b != b[i].b) return false;
+				}
+				return true;
+			};
 			vector<byte> validIds;
 			for (auto ca = act->begin(); ca != act->end(); ca++) {
 				if (!ca->act.empty() && ca->act.front().type != AlienFX_A_Power) {
-					SetV4Action(&(*ca));
+					if (v4MaxZones > 0 && ca->index >= v4MaxZones) continue;
 					validIds.push_back(ca->index);
+					bool placed = false;
+					for (auto& g : sgs) {
+						if (g.ids.size() < 25 && sameActs(g.acts, ca->act)) {
+							g.ids.push_back(ca->index);
+							placed = true;
+							break;
+						}
+					}
+					if (!placed) sgs.push_back({ ca->act, { ca->index } });
 				}
+			}
+			size_t pairs = 0;
+			for (auto& sg : sgs) {
+				if (pairs >= 12) break;
+				vector<Afx_icommand> smods = { { 5, { (byte)sg.ids.size() } }, { 6, sg.ids } };
+				PrepareAndSend(COMMV4_colorSel, &smods);
+				Afx_lightblock dummy{ sg.ids.front(), sg.acts };
+				for (auto ca = dummy.act.begin(); ca != dummy.act.end();) {
+					byte lastMode = 0;
+					WORD lastDur = 0x07d0, lastTempo = 0x00fa;
+					for (byte bPos = 3; bPos + 7 < length && ca != dummy.act.end(); bPos += 8) {
+						byte mode = (ca->type == AlienFX_A_Pulse || ca->type == AlienFX_A_Breathing) ? 0x01
+							: (ca->type != AlienFX_A_Color ? 0x02 : 0x00);
+						WORD durMs = (ca->type == AlienFX_A_Color) ? 0x07d0 : (WORD)ClampInt((int)ca->time * 40, 200, 5000);
+						WORD tempoVal = (ca->type == AlienFX_A_Color) ? 0x00fa : (WORD)ClampInt((int)ca->tempo, 12, 250);
+						byte r = ca->r, g = ca->g, b = ca->b;
+						if (r == 0 && g == 0 && b == 0) r = g = b = 1;
+						smods.push_back({ bPos, { mode, (byte)(durMs >> 8), (byte)(durMs & 0xff), (byte)(tempoVal >> 8), (byte)(tempoVal & 0xff), r, g, b } });
+						lastMode = mode; lastDur = durMs; lastTempo = tempoVal;
+						ca++;
+					}
+					if (dummy.act.size() == 1 && lastMode != 0x00 && smods.size() == 1 && 11 + 7 < length) {
+						smods.push_back({ 11, { lastMode, (byte)(lastDur >> 8), (byte)(lastDur & 0xff), (byte)(lastTempo >> 8), (byte)(lastTempo & 0xff), 1, 1, 1 } });
+					}
+					PrepareAndSend(COMMV4_colorSet, &smods);
+				}
+				pairs++;
 			}
 			PrepareAndSend(COMMV4_control, { { 4, {2,0,0x61} } });
 			PrepareAndSend(COMMV4_control, { { 4, {6,0,0x61} } });
 			PrepareAndSend(COMMV4_control, { { 4, {5,0,0x61} } });
 			if (bright > 0 && !validIds.empty()) {
-				for (size_t idx = 0; idx < validIds.size(); idx += 25) {
-					size_t count = (validIds.size() - idx < 25) ? (validIds.size() - idx) : 25;
+				for (size_t idx = 0; idx < validIds.size(); idx += 28) {
+					size_t count = (validIds.size() - idx < 28) ? (validIds.size() - idx) : 28;
 					vector<byte> chunk(validIds.begin() + idx, validIds.begin() + idx + count);
 					vector<Afx_icommand> tmods = {
 						{ 3, { (byte)(0x64 - ClampInt(bright, 0, 100)), 0, (byte)count } },
@@ -1361,49 +1526,39 @@ namespace AlienFX_SDK {
 		if (inSet) UpdateColors();
 		WaitForReady();
 
-		// 1. Standard group 0x0061 batch across channels 0..44
-		PrepareAndSend(COMMV4_control, { { 4, {4, 0, 0x61} } });
-		PrepareAndSend(COMMV4_control, { { 4, {1, 0, 0x61} } });
-
 		vector<byte> allIds;
-		allIds.reserve(45);
-		for (byte id = 0; id < 45; id++) allIds.push_back(id);
+		allIds.reserve(256);
+		for (int id = 0; id < 256; id++) allIds.push_back((byte)id);
 
-		for (size_t idx = 0; idx < allIds.size(); idx += 25) {
-			size_t count = (allIds.size() - idx < 25) ? (allIds.size() - idx) : 25;
+		// Ensure all channels 0..255 are turned on at full brightness (dim=0x00)
+		for (size_t idx = 0; idx < allIds.size(); idx += 28) {
+			size_t count = (allIds.size() - idx < 28) ? (allIds.size() - idx) : 28;
 			vector<byte> chunk(allIds.begin() + idx, allIds.begin() + idx + count);
-			vector<Afx_icommand> mods = {
-				{ 5, { (byte)count } },
-				{ 6, chunk }
-			};
-			PrepareAndSend(COMMV4_colorSel, &mods);
-
-			mods = {
-				{ 3, { 0x00, 0x07, 0xd0, 0x00, 0xfa, 0xff, 0xff, 0xff } }
-			};
-			PrepareAndSend(COMMV4_colorSet, &mods);
-		}
-		PrepareAndSend(COMMV4_control, { { 4, {2, 0, 0x61} } });
-		PrepareAndSend(COMMV4_control, { { 4, {6, 0, 0x61} } });
-		PrepareAndSend(COMMV4_control, { { 4, {5, 0, 0x61} } });
-
-		// 2. Direct single-color broadcast command (0x03 0x27) & turn-on (0x03 0x26)
-		for (size_t idx = 0; idx < allIds.size(); idx += 25) {
-			size_t count = (allIds.size() - idx < 25) ? (allIds.size() - idx) : 25;
-			vector<byte> chunk(allIds.begin() + idx, allIds.begin() + idx + count);
-			vector<Afx_icommand> omods = {
-				{ 3, { 0xff, 0xff, 0xff, 0x00, (byte)count } },
-				{ 8, chunk }
-			};
-			PrepareAndSend(COMMV4_setOneColor, &omods);
-
 			vector<Afx_icommand> tmods = {
 				{ 3, { 0x00, 0x00, (byte)count } },
 				{ 6, chunk }
 			};
 			PrepareAndSend(COMMV4_turnOn, &tmods);
 		}
-		PrepareAndSend(COMMV4_control);
+
+		// Broadcast solid white across 0..255 via COMMV4_setOneColor (0x03 0x27) on live 0xFFFF
+		Reset();
+		int pktCount = 0;
+		for (size_t idx = 0; idx < allIds.size(); idx += 26) {
+			size_t count = (allIds.size() - idx < 26) ? (allIds.size() - idx) : 26;
+			vector<byte> chunk(allIds.begin() + idx, allIds.begin() + idx + count);
+			vector<Afx_icommand> omods = {
+				{ 3, { 0xff, 0xff, 0xff, 0x00, (byte)count } },
+				{ 8, chunk }
+			};
+			PrepareAndSend(COMMV4_setOneColor, &omods);
+			if (++pktCount >= 10 && idx + count < allIds.size()) {
+				UpdateColors();
+				Reset();
+				pktCount = 0;
+			}
+		}
+		UpdateColors();
 		Sleep(20);
 		return true;
 	}

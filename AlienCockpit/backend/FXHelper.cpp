@@ -160,8 +160,38 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 	red.r = 255;
 
 	if (dev->dev->version == AlienFX_SDK::API_V4) {
+		vector<byte> offIds;
+		offIds.reserve(dev->lights.size() + 1);
+		for (const auto& l : dev->lights) {
+			if ((int)l.lightid != id && !(l.flags & ALIENFX_FLAG_POWER)) {
+				offIds.push_back((byte)l.lightid);
+			}
+		}
+		if (oldtest >= 0 && oldtest != id) {
+			bool alreadyQueued = false;
+			for (byte q : offIds) {
+				if (q == (byte)oldtest) { alreadyQueued = true; break; }
+			}
+			if (!alreadyQueued) offIds.push_back((byte)oldtest);
+		}
 		dev->dev->Reset();
+		if (!offIds.empty()) {
+			dev->dev->SetMultiColor(&offIds, off);
+		}
+		if (id >= 0) {
+			dev->dev->SetColor((byte)id, red);
+			oldtest = id;
+		} else {
+			oldtest = -1;
+		}
+		dev->dev->UpdateColors();
+		if (id >= 0) {
+			vector<AlienFX_SDK::Afx_light> tempProbe{ { (byte)id, { 0, 0 }, "Probe" } };
+			dev->dev->SetBrightness((byte)(finalBrightness > 0 ? finalBrightness : 255), dev->brightness, &tempProbe, true);
+		}
+		return;
 	}
+
 	if (!dev->lights.empty()) {
 		vector<byte> opLights;
 		for (auto lIter = dev->lights.begin(); lIter != dev->lights.end(); lIter++) {
@@ -170,30 +200,19 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 		}
 		if (!opLights.empty()) {
 			dev->dev->SetMultiColor(&opLights, off);
-			if (dev->dev->version != AlienFX_SDK::API_V4) {
-				dev->dev->UpdateColors();
-			}
+			dev->dev->UpdateColors();
 		}
 	}
 	if (oldtest >= 0 && oldtest != id) {
 		dev->dev->SetColor((byte)oldtest, off);
-		if (dev->dev->version != AlienFX_SDK::API_V4) {
-			dev->dev->UpdateColors();
-		}
+		dev->dev->UpdateColors();
 	}
 	if (id >= 0) {
 		dev->dev->SetColor((byte)id, red);
 		oldtest = id;
 		dev->dev->UpdateColors();
-		if (dev->dev->version == AlienFX_SDK::API_V4) {
-			vector<AlienFX_SDK::Afx_light> tempProbe{ { (byte)id, { 0, 0 }, "Probe" } };
-			dev->dev->SetBrightness((byte)(finalBrightness > 0 ? finalBrightness : 255), dev->brightness, &tempProbe, true);
-		}
 	} else {
 		oldtest = -1;
-		if (dev->dev->version == AlienFX_SDK::API_V4) {
-			dev->dev->UpdateColors();
-		}
 	}
 }
 
@@ -256,6 +275,9 @@ void FXHelper::QueryCommand(WORD pid, LightQueryElement &lqe) {
 			}
 			modifyQuery.lockWrite();
 			devQuery->lightQuery.push(lqe);
+			if (lqe.command == 1) {
+				devQuery->pendingUpdates++;
+			}
 			SetEvent(devQuery->haveNewElement);
 			modifyQuery.unlockWrite();
 		}
@@ -859,6 +881,9 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 					//lightQuery->inUpdate = false;
 				}
 				dev_query.clear();
+				src->modifyQuery.lockWrite();
+				if (lightQuery->pendingUpdates > 0) lightQuery->pendingUpdates--;
+				src->modifyQuery.unlockWrite();
 				//DebugPrint("Update complete\n");
 			} break;
 			case 4: { // power button
@@ -961,7 +986,7 @@ void FXHelper::ApplyMouseLowBatteryRed(bool active)
 				SetLight(MAKELONG(dev.pid, l.lightid), &redAlert);
 			}
 		} else {
-			for (byte z = 1; z <= 3; z++) {
+			for (byte z = 0; z < 2; z++) {
 				SetLight(MAKELONG(dev.pid, z), &redAlert);
 			}
 		}

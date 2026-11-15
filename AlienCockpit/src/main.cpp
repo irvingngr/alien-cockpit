@@ -284,11 +284,18 @@ static void EnsureDefaultDeviceMappings() {
             });
         bool allZeroScancode = !dev.lights.empty() && std::all_of(dev.lights.begin(), dev.lights.end(),
             [](const AlienFX_SDK::Afx_light& l) { return l.scancode == 0; });
+        bool missingMouseZero = isMouseDevice && !std::any_of(dev.lights.begin(), dev.lights.end(),
+            [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 0; });
+        bool hasInvalidMouseId = isMouseDevice && std::any_of(dev.lights.begin(), dev.lights.end(),
+            [](const AlienFX_SDK::Afx_light& l) { return l.lightid > 1; });
         bool needsUpgrade = dev.lights.empty() ||
             (isDarfonKeyboard && (hasPlaceholder || dev.lights.size() <= 20 || allZeroScancode)) ||
-            (isMouseDevice && (hasPlaceholder || dev.lights.size() > 8));
+            (isMouseDevice && (hasPlaceholder || dev.lights.size() != 2 || missingMouseZero || hasInvalidMouseId));
 
         if (needsUpgrade) {
+            bool hadLegacy1BasedMouse = isMouseDevice && missingMouseZero &&
+                std::any_of(dev.lights.begin(), dev.lights.end(),
+                    [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 1 || l.lightid == 2 || l.lightid == 3; });
             dev.lights.clear();
 
             if (!isMouseDevice) {
@@ -338,31 +345,36 @@ static void EnsureDefaultDeviceMappings() {
                 }
             }
 
-            // 2. Fallback: full per-key layout for Darfon keyboards, 3 AWCC zones for mice, or 0..15 for chassis
+            // 2. Fallback: full per-key layout for Darfon keyboards, canonical 0-based 2 zones for AW610M/V7 mice, or 0..79 for 0551 chassis
             if (dev.lights.empty()) {
                 if (isDarfonKeyboard) {
                     dev.lights = darfonTemplate;
                     anyAdded = true;
                 } else if (isMouseDevice) {
-                    struct MouseZoneDef { byte id; const char* name; };
-                    static const MouseZoneDef kMouseZones[] = {
-                        { 1, "Side Strips & Wheel" },
-                        { 2, "Mouse Logo" },
-                        { 3, "DPI Indicator" }
-                    };
-                    for (const auto& mz : kMouseZones) {
-                        AlienFX_SDK::Afx_light l{};
-                        l.lightid = mz.id;
-                        l.flags = 0;
-                        l.name = mz.name;
-                        dev.lights.push_back(l);
+                    dev.lights.push_back({ 0, { 0, 0 }, "Side Strips & Wheel" });
+                    dev.lights.push_back({ 1, { 0, 0 }, "Mouse Logo" });
+                    if (hadLegacy1BasedMouse) {
+                        if (auto* groupsVec = conf->afx_dev.GetGroups()) {
+                            for (auto& g : *groupsVec) {
+                                for (auto git = g.lights.begin(); git != g.lights.end(); ) {
+                                    if (git->did == dev.pid && git->lid >= 1 && git->lid <= 2) {
+                                        git->lid = static_cast<WORD>(git->lid - 1);
+                                        ++git;
+                                    } else if (git->did == dev.pid && git->lid > 2) {
+                                        git = g.lights.erase(git);
+                                    } else {
+                                        ++git;
+                                    }
+                                }
+                            }
+                        }
                     }
                     anyAdded = true;
                 } else {
                     byte fallbackCount = 16;
                     if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4) {
                         fallbackCount = (dev.pid == 0x0551)
-                            ? static_cast<byte>(std::max<int>(45, dev.dev->v4MaxZones))
+                            ? static_cast<byte>(dev.dev->v4MaxZones > 0 ? dev.dev->v4MaxZones : 80)
                             : (dev.dev->v4MaxZones > 0 ? dev.dev->v4MaxZones : 16);
                     } else if (dev.dev && dev.dev->version == AlienFX_SDK::API_ACPI) {
                         fallbackCount = 8;
@@ -381,39 +393,16 @@ static void EnsureDefaultDeviceMappings() {
             }
         }
 
-        // Migrate legacy 0-based AW610M zones (0..2) to 1-based hardware zone IDs (1..3)
-        if (isMouseDevice) {
-            bool hasZeroId = std::any_of(dev.lights.begin(), dev.lights.end(),
-                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 0; });
-            bool hasZone3 = std::any_of(dev.lights.begin(), dev.lights.end(),
-                [](const AlienFX_SDK::Afx_light& l) { return l.lightid == 3; });
-            if (hasZeroId && !hasZone3) {
-                dev.lights.clear();
-                dev.lights.push_back({ 1, { 0, 0 }, "Side Strips & Wheel" });
-                dev.lights.push_back({ 2, { 0, 0 }, "Mouse Logo" });
-                dev.lights.push_back({ 3, { 0, 0 }, "DPI Indicator" });
-                if (auto* groupsVec = conf->afx_dev.GetGroups()) {
-                    for (auto& g : *groupsVec) {
-                        for (auto& gl : g.lights) {
-                            if (gl.did == dev.pid && gl.lid <= 2) {
-                                gl.lid = static_cast<WORD>(gl.lid + 1);
-                            }
-                        }
-                    }
-                }
-                anyAdded = true;
-            }
-        }
-
-        // Ensure AA18250 AW-ELC (PID 0x0551) has at least 45 zones (0..44, covering touchpad 0x24 = 36)
-        if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.pid == 0x0551 && hasPlaceholder) {
-            byte targetCount = static_cast<byte>(std::max<int>(45, dev.dev->v4MaxZones));
-            for (byte i = 0; i < targetCount; ++i) {
+        // Ensure AA18250 AW-ELC (PID 0x0551) has all chassis zones (0..79 or reported v4MaxZones) while preserving user bindings
+        if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.pid == 0x0551) {
+            int targetCount = (dev.dev->v4MaxZones > 0) ? static_cast<int>(dev.dev->v4MaxZones) : 80;
+            for (int i = 0; i < targetCount; ++i) {
+                byte lid = static_cast<byte>(i);
                 bool exists = std::any_of(dev.lights.begin(), dev.lights.end(),
-                    [i](const AlienFX_SDK::Afx_light& l) { return l.lightid == i; });
+                    [lid](const AlienFX_SDK::Afx_light& l) { return l.lightid == lid; });
                 if (!exists) {
                     AlienFX_SDK::Afx_light nl{};
-                    nl.lightid = i;
+                    nl.lightid = lid;
                     nl.flags = 0;
                     nl.name = "LED Zone " + std::to_string(i);
                     dev.lights.push_back(nl);
@@ -422,9 +411,9 @@ static void EnsureDefaultDeviceMappings() {
             }
         }
 
-        // Trim out-of-range auto-generated V4 chassis zones so AW-ELC FINISH_PLAY won't reject valid zones
+        // Trim out-of-range auto-generated V4 chassis zones only when hardware explicitly reported v4MaxZones
         if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0) {
-            byte trimLimit = (dev.pid == 0x0551) ? static_cast<byte>(std::max<int>(45, dev.dev->v4MaxZones)) : dev.dev->v4MaxZones;
+            byte trimLimit = dev.dev->v4MaxZones;
             for (auto lit = dev.lights.begin(); lit != dev.lights.end(); ) {
                 if (lit->lightid >= trimLimit && lit->name.rfind("LED Zone ", 0) == 0) {
                     lit = dev.lights.erase(lit);
