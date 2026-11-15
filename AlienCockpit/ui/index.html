@@ -69,23 +69,33 @@
       <!-- Left Navigation Rail -->
       <nav class="nav-rail">
         <button class="nav-item active" data-tab="lighting">
-          <span class="nav-icon">◈</span>
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 12 12 22 2 12 12 2"/><circle cx="12" cy="12" r="3"/></svg>
+          </span>
           <span class="nav-text">Lighting Studio</span>
         </button>
         <button class="nav-item" data-tab="thermals">
-          <span class="nav-icon">❖</span>
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12c0-3 2.5-5 5-5 2 0 3 1.2 3 2.5 0 2.5-3 2.5-8 2.5Z"/><path d="M12 12c3 0 5 2.5 5 5 0 2-1.2 3-2.5 3-2.5 0-2.5-3-2.5-8Z"/><path d="M12 12c0 3-2.5 5-5 5-2 0-3-1.2-3-2.5 0-2.5 3-2.5 8-2.5Z"/><path d="M12 12c-3 0-5-2.5-5-5 0-2 1.2-3 2.5-3 2.5 0 2.5 3 2.5 8Z"/><circle cx="12" cy="12" r="2"/></svg>
+          </span>
           <span class="nav-text">Thermals &amp; Fans</span>
         </button>
         <button class="nav-item" data-tab="battery">
-          <span class="nav-icon">⚡</span>
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 4 14 11 14 10 22 20 10 13 10 13 2"/></svg>
+          </span>
           <span class="nav-text">Power &amp; Battery</span>
         </button>
         <button class="nav-item" data-tab="profiles">
-          <span class="nav-icon">⬢</span>
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 20 7 20 17 12 22 4 17 4 7 12 2"/></svg>
+          </span>
           <span class="nav-text">Profiles</span>
         </button>
         <button class="nav-item" data-tab="settings">
-          <span class="nav-icon">⚙</span>
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </span>
           <span class="nav-text">System &amp; Boot</span>
         </button>
 
@@ -187,34 +197,113 @@
                 </div>
               </div>
 
-              <!-- Chassis Interactive SVG Map -->
+              <!-- Chassis Interactive AA18250 Map (45 LEDs: #0-#44) -->
               <div class="device-canvas" id="view-chassis">
-                <div class="chassis-stage">
-                  <svg viewBox="0 0 500 320" class="chassis-svg" id="chassis-svg">
-                    <!-- Laptop / System Silhouette -->
-                    <rect x="70" y="30" width="360" height="200" rx="14" fill="#0b101d" stroke="#24324d" stroke-width="3"/>
-                    <!-- Lid Emblem -->
-                    <polygon class="chassis-zone" data-zone-id="10" data-zone-name="Lid Emblem"
-                             points="250,95 276,125 264,165 236,165 224,125"
-                             fill="#1e293b"/>
-                    <!-- Rear Exhaust Ring -->
-                    <rect class="chassis-zone" data-zone-id="11" data-zone-name="Rear Exhaust Ring"
-                          x="110" y="218" width="280" height="10" rx="5" fill="#1e293b"/>
-                    <!-- Base / Front Lightbar -->
-                    <polygon points="40,245 460,245 485,285 15,285" fill="#10182b" stroke="#24324d" stroke-width="2"/>
-                    <!-- Power Button (Deck) -->
-                    <circle class="chassis-zone" data-zone-id="power" data-zone-name="Power Button"
-                            cx="250" cy="258" r="8" fill="#1e293b" stroke="#334155" stroke-width="2"/>
-                    <rect class="chassis-zone" data-zone-id="12" data-zone-name="Front Lightbar"
-                          x="80" y="274" width="340" height="8" rx="4" fill="#1e293b"/>
-                    <!-- Left Vent -->
-                    <rect class="chassis-zone" data-zone-id="13" data-zone-name="Left Side Vent"
-                          x="28" y="256" width="36" height="10" rx="4" fill="#1e293b"/>
-                    <!-- Right Vent -->
-                    <rect class="chassis-zone" data-zone-id="14" data-zone-name="Right Side Vent"
-                          x="436" y="256" width="36" height="10" rx="4" fill="#1e293b"/>
-                  </svg>
-                  <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone (including Power Button) to customize</div>
+                <div class="chassis-stage aa18-chassis-deck">
+                  <div class="chassis-quick-bar">
+                    <span class="chassis-model-pill">AA18250 • 45-LED Chassis</span>
+                    <div class="chassis-quick-actions">
+                      <button type="button" class="qs-btn" id="chassis-sel-rear">Rear (0–30)</button>
+                      <button type="button" class="qs-btn" id="chassis-sel-touchpad">Touchpad (35–44)</button>
+                      <button type="button" class="qs-btn" id="chassis-sel-all">Select All</button>
+                      <button type="button" class="qs-btn" id="chassis-sel-clear">Clear</button>
+                    </div>
+                  </div>
+
+                  <!-- Rear Lightbar: #0 - #30 (31 LEDs in a straight line) -->
+                  <div class="chassis-section-box">
+                    <div class="chassis-section-head">
+                      <span>REAR LIGHTBAR</span>
+                      <span class="hint-text">#0 – #30 (31 LEDs • click or drag)</span>
+                    </div>
+                    <div class="rear-lightbar-strip" id="rear-lightbar-strip">
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="0" data-zone-name="Rear Lightbar 1" title="#0 Rear Lightbar 1"><span>0</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="1" data-zone-name="Rear Lightbar 2" title="#1 Rear Lightbar 2"><span>1</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="2" data-zone-name="Rear Lightbar 3" title="#2 Rear Lightbar 3"><span>2</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="3" data-zone-name="Rear Lightbar 4" title="#3 Rear Lightbar 4"><span>3</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="4" data-zone-name="Rear Lightbar 5" title="#4 Rear Lightbar 5"><span>4</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="5" data-zone-name="Rear Lightbar 6" title="#5 Rear Lightbar 6"><span>5</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="6" data-zone-name="Rear Lightbar 7" title="#6 Rear Lightbar 7"><span>6</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="7" data-zone-name="Rear Lightbar 8" title="#7 Rear Lightbar 8"><span>7</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="8" data-zone-name="Rear Lightbar 9" title="#8 Rear Lightbar 9"><span>8</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="9" data-zone-name="Rear Lightbar 10" title="#9 Rear Lightbar 10"><span>9</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="10" data-zone-name="Rear Lightbar 11" title="#10 Rear Lightbar 11"><span>10</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="11" data-zone-name="Rear Lightbar 12" title="#11 Rear Lightbar 12"><span>11</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="12" data-zone-name="Rear Lightbar 13" title="#12 Rear Lightbar 13"><span>12</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="13" data-zone-name="Rear Lightbar 14" title="#13 Rear Lightbar 14"><span>13</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="14" data-zone-name="Rear Lightbar 15" title="#14 Rear Lightbar 15"><span>14</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="15" data-zone-name="Rear Lightbar 16" title="#15 Rear Lightbar 16"><span>15</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="16" data-zone-name="Rear Lightbar 17" title="#16 Rear Lightbar 17"><span>16</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="17" data-zone-name="Rear Lightbar 18" title="#17 Rear Lightbar 18"><span>17</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="18" data-zone-name="Rear Lightbar 19" title="#18 Rear Lightbar 19"><span>18</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="19" data-zone-name="Rear Lightbar 20" title="#19 Rear Lightbar 20"><span>19</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="20" data-zone-name="Rear Lightbar 21" title="#20 Rear Lightbar 21"><span>20</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="21" data-zone-name="Rear Lightbar 22" title="#21 Rear Lightbar 22"><span>21</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="22" data-zone-name="Rear Lightbar 23" title="#22 Rear Lightbar 23"><span>22</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="23" data-zone-name="Rear Lightbar 24" title="#23 Rear Lightbar 24"><span>23</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="24" data-zone-name="Rear Lightbar 25" title="#24 Rear Lightbar 25"><span>24</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="25" data-zone-name="Rear Lightbar 26" title="#25 Rear Lightbar 26"><span>25</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="26" data-zone-name="Rear Lightbar 27" title="#26 Rear Lightbar 27"><span>26</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="27" data-zone-name="Rear Lightbar 28" title="#27 Rear Lightbar 28"><span>27</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="28" data-zone-name="Rear Lightbar 29" title="#28 Rear Lightbar 29"><span>28</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="29" data-zone-name="Rear Lightbar 30" title="#29 Rear Lightbar 30"><span>29</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="30" data-zone-name="Rear Lightbar 31" title="#30 Rear Lightbar 31"><span>30</span></button>
+                    </div>
+                  </div>
+
+                  <!-- Center Deck: Left Fan (#34), Power Button (#31), Lid Alienhead (#32), Right Fan (#33) -->
+                  <div class="chassis-mid-grid">
+                    <button type="button" class="chassis-zone chassis-icon-card" data-zone-id="34" data-zone-name="Left Fan" title="#34 Left Fan">
+                      <span class="chassis-icon-glyph" style="-webkit-mask-image: url('assets/fan-w.png'); mask-image: url('assets/fan-w.png');"></span>
+                      <span class="chassis-zone-title">Left Fan</span>
+                      <span class="chassis-zone-id">#34</span>
+                    </button>
+
+                    <button type="button" class="chassis-zone chassis-icon-card chassis-power-card" data-zone-id="power" data-zone-name="Power Button" title="#31 Power Button">
+                      <span class="chassis-power-ring">
+                        <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                          <path d="M12 3v8"/>
+                          <path d="M7.05 6.05a7 7 0 1 0 9.9 0"/>
+                        </svg>
+                      </span>
+                      <span class="chassis-zone-title">Power Button</span>
+                      <span class="chassis-zone-id">#31</span>
+                    </button>
+
+                    <button type="button" class="chassis-zone chassis-icon-card" data-zone-id="32" data-zone-name="Lid Alienhead" title="#32 Lid Alienhead">
+                      <span class="chassis-icon-glyph" style="-webkit-mask-image: url('assets/alien-w.png'); mask-image: url('assets/alien-w.png');"></span>
+                      <span class="chassis-zone-title">Lid Alienhead</span>
+                      <span class="chassis-zone-id">#32</span>
+                    </button>
+
+                    <button type="button" class="chassis-zone chassis-icon-card" data-zone-id="33" data-zone-name="Right Fan" title="#33 Right Fan">
+                      <span class="chassis-icon-glyph" style="-webkit-mask-image: url('assets/fan-w.png'); mask-image: url('assets/fan-w.png');"></span>
+                      <span class="chassis-zone-title">Right Fan</span>
+                      <span class="chassis-zone-id">#33</span>
+                    </button>
+                  </div>
+
+                  <!-- Touchpad / Mousepad: #35 - #44 (10 LEDs) -->
+                  <div class="chassis-section-box">
+                    <div class="chassis-section-head">
+                      <span>RGB TOUCHPAD</span>
+                      <span class="hint-text">#35 – #44 (10 LEDs • click or drag)</span>
+                    </div>
+                    <div class="touchpad-strip" id="touchpad-strip">
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="35" data-zone-name="Touchpad 1" title="#35 Touchpad 1"><span>35</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="36" data-zone-name="Touchpad 2" title="#36 Touchpad 2"><span>36</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="37" data-zone-name="Touchpad 3" title="#37 Touchpad 3"><span>37</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="38" data-zone-name="Touchpad 4" title="#38 Touchpad 4"><span>38</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="39" data-zone-name="Touchpad 5" title="#39 Touchpad 5"><span>39</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="40" data-zone-name="Touchpad 6" title="#40 Touchpad 6"><span>40</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="41" data-zone-name="Touchpad 7" title="#41 Touchpad 7"><span>41</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="42" data-zone-name="Touchpad 8" title="#42 Touchpad 8"><span>42</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="43" data-zone-name="Touchpad 9" title="#43 Touchpad 9"><span>43</span></button>
+                      <button type="button" class="chassis-zone chassis-led-seg" data-zone-id="44" data-zone-name="Touchpad 10" title="#44 Touchpad 10"><span>44</span></button>
+                    </div>
+                  </div>
+
+                  <div class="mouse-legend" id="chassis-zone-label">Click any chassis zone (including Rear, Fans, Lid, Power Button, or Touchpad) to customize</div>
                 </div>
               </div>
 
@@ -555,8 +644,11 @@
 
           <div class="card about-card">
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
-            <div>
-              <h3>AlienCockpit v1.0.10 — AWCC Alternative</h3>
+            <div class="about-info">
+              <div class="about-title-row">
+                <h3>AlienCockpit v1.0.10 — AWCC Alternative</h3>
+                <span class="about-model-badge">Optimized for Alienware 18 Area-51 (AA18250)</span>
+              </div>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>
               <div class="credits-author">
                 <span>Crafted by <strong>Irving Ngr</strong></span>
@@ -577,6 +669,9 @@
                 </svg>
                 <span class="hint-text">• Powered by AlienFX-SDK &amp; AlienFan-SDK (T-Troll)</span>
               </div>
+            </div>
+            <div class="about-laptop-showcase">
+              <img src="assets/AW18-10.png" alt="Alienware 18 Area-51 (AA18250)" class="about-laptop-img" />
             </div>
           </div>
         </section>

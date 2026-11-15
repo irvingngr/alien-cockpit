@@ -6,6 +6,12 @@
 
 **AlienCockpit** is an ultra-lightweight, low-resource command center for **Windows 11** built as a modern fork of [`alienfx-tools`](https://github.com/T-Troll/alienfx-tools). Unlike heavy vendor suites such as Alienware Command Center (AWCC), AlienCockpit consumes **minimal RAM and near-0% idle CPU** with **no bloated background telemetry or updater services**. It pairs the rock-solid hardware stability of the open-source `AlienFX-SDK` and `AlienFan-SDK` C++ engines with a crisp PerMonitorV2 WebView2 interface.
 
+<p align="center">
+  <img src="AlienCockpit/assets/AW18-10.png" alt="Optimized for Alienware 18 Area-51 (AA18250)" width="460" />
+  <br />
+  <sub><b>Optimized for Alienware 18 Area-51 (AA18250)</b> — Full 45-LED Chassis, Rear Lightbar (#0–#30), Left/Right Fans (#34/#33), Lid Alienhead (#32), Power Button (#31), and 10-LED RGB Touchpad (#35–#44)</sub>
+</p>
+
 ---
 
 ## Quick Installation (No Building Required)
@@ -24,18 +30,18 @@ You do **not** need Visual Studio or any compiler to use AlienCockpit:
 
 - **Ultra-Low Resource Usage**: Native C++20 core with minimal memory footprint and no background bloatware compared to AWCC.
 - **Intuitive Visual RGB Studio**
-  - Interactive **Full-Size Keyboard** (including Numpad & `⏻ Power Button`), **RGB Touchpad**, **AWCC 3-Zone Gaming Mouse** (`Side Strips & Wheel`, `Mouse Logo`, `DPI Indicator`), and **Laptop Lid / Chassis** visual maps that reflect live hardware state.
+  - Interactive **Full-Size Keyboard** (including Numpad & `⏻ Power Button`), **10-LED RGB Touchpad**, **AWCC 3-Zone Gaming Mouse** (`Side Strips & Wheel`, `Mouse Logo`, `DPI Indicator`), and **Alienware 18 Area-51 (`AA18250`) 45-LED Chassis & Zones** visual maps that reflect live hardware state.
   - Individual **Key / Zone Brightness** alongside global **Master Brightness**, plus a **Startup Keyboard Intro Animation** (with optional toggle in `System & Boot`).
-  - Smooth continuous 30fps animations & speed-calibrated effects: `Static`, `Breathing`, `Pulse`, `Morph`, `Spectrum`, `Wave`, **`Aurora`** multi-color palettes, and **`Summer`** interactive beach-sky water-drop ripple wave reacting to real keystrokes.
-  - Non-destructive **Game & Theme Presets** (`Cyberpunk 2077`, `Aurora Borealis`, `Crimson Stealth`, etc.) with 1-click **`Reset to Lighting Studio`**.
-  - **Interactive Hardware LED Probe Deck**: Toggle red-signal hardware probing (`◀` / `▶`) directly beneath the visual keyboard to visually identify any physical LED ID, **`+ Add LED`**, **`✕ Remove`**, or bind **`→ Touchpad`** / **`→ Power Btn`** without losing your profile.
+  - Smooth continuous 30fps animations & speed-calibrated effects: `Static`, `Breathing`, `Pulse`, `Morph`, `Spectrum`, `Wave`, **`Aurora`** multi-color palettes, and global **`Waves Mode`** water-drop ripple overlay reacting to real keystrokes.
+  - Non-destructive **Game & Theme Presets** (`Cyberpunk`, `Aurora Borealis`, `Crimson Stealth`, etc.) with 1-click **`Reset to Lighting Studio`**.
+  - **Interactive Hardware LED Probe Deck**: Toggle red-signal hardware probing (`◀` / `▶` or mouse wheel) directly beneath the visual keyboard to visually identify any physical LED ID, **`+ Add LED`**, **`✕ Remove`**, or bind **`→ Touchpad`** / **`→ Power Btn`** without losing your profile.
 - **Thermals, Fans & Power Modes (`AlienFan-SDK`)**
   - Live CPU/GPU/ambient temperature sensors and animated spinning **Cooling Fan Rotors** driven by live RPM telemetry.
   - High-precision drag-and-drop **Interactive Fan Curve Editor** with active preset detection (`Silent`, `Balanced`, `Gaming`, `Max Cooling`, or `Custom`).
 - **Connected Device Battery Telemetry**
   - Displays real-time laptop battery percentage and charging status, plus wireless HID / Bluetooth / Windows Battery Class peripherals.
 - **Profiles & Automation**
-  - Create, activate, and manage custom lighting/thermal profiles with automatic switching by running applications or power source (AC / Battery).
+  - Create, **rename**, **duplicate**, activate, and manage custom lighting/thermal profiles with automatic switching by running applications or power source (AC / Battery).
 - **Windows 11 Native Integration**
   - **Start with Windows 11** (`--minimized` support), **Always Run as Administrator** (elevated logon task option), and dynamic **System Tray** icon + battery/lights hover tooltip.
   - Immersive dark titlebar (`DWMWA_USE_IMMERSIVE_DARK_MODE`) and **PerMonitorV2** High-DPI sharpness.

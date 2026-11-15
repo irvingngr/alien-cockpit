@@ -1178,7 +1178,8 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     }
 
     if (cmd == "createProfile" && conf) {
-        std::string name = msg.get("name").asString("New Profile");
+        std::string name = TrimWhitespace(msg.get("name").asString("New Profile"));
+        if (name.empty()) name = "New Profile";
         unsigned maxId = 1;
         for (const auto& p : conf->profiles) {
             if (p->id != 9999 && p->id >= maxId) maxId = p->id + 1;
@@ -1188,6 +1189,49 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         np->name = name;
         conf->profiles.push_back(np);
         conf->Save();
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "renameProfile" && conf) {
+        unsigned id = static_cast<unsigned>(msg.get("id").asInt(0));
+        std::string newName = TrimWhitespace(msg.get("name").asString(""));
+        if (id != 9999 && !newName.empty()) {
+            profile* p = conf->FindProfile(id);
+            if (p) {
+                p->name = newName;
+                conf->Save();
+            }
+        }
+        return BuildFullStateJson();
+    }
+
+    if (cmd == "duplicateProfile" && conf) {
+        unsigned id = static_cast<unsigned>(msg.get("id").asInt(0));
+        profile* src = conf->FindProfile(id);
+        if (src && src->id != 9999) {
+            unsigned maxId = 1;
+            for (const auto& p : conf->profiles) {
+                if (p->id != 9999 && p->id >= maxId) maxId = p->id + 1;
+            }
+            profile* np = new profile();
+            np->id = maxId;
+            np->name = src->name + " (Copy)";
+            np->flags = static_cast<WORD>(src->flags & ~(PROF_DEFAULT | PROF_ACTIVE));
+            np->effmode = src->effmode;
+            np->triggerFlags = src->triggerFlags;
+            np->triggerkey = src->triggerkey;
+            np->triggerapp = src->triggerapp;
+            np->lightsets = src->lightsets;
+            for (auto& ls : np->lightsets) {
+                ls.effect.capt = NULL;
+            }
+            np->fansets = NULL;
+            np->effects = src->effects;
+            np->script = src->script;
+            np->freqMode = src->freqMode;
+            conf->profiles.push_back(np);
+            conf->Save();
+        }
         return BuildFullStateJson();
     }
 

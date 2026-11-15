@@ -190,6 +190,7 @@ const KEY_BY_ID = new Map(ALL_KEY_DEFS.map((k) => [k.id, k]));
 
 function isKeyboardDevice(dev) {
   if (!dev) return false;
+  if (dev.vid === 0x187c || /elc|chassis|tron|lightbar/i.test(dev.name || '')) return false;
   return dev.vid === 0x0d62 || dev.version === 5 || (dev.lights && dev.lights.length > 20) ||
     /key|kbd|darfon/i.test(dev.name || '');
 }
@@ -298,6 +299,11 @@ function findLightsForZone(zoneId, zoneName, dev) {
   const usable = nonInd.length > 0 ? nonInd : dev.lights;
   const numZid = parseInt(zoneId, 10);
 
+  if (!Number.isNaN(numZid)) {
+    const exact = dev.lights.find((l) => l.id === numZid);
+    if (exact) return [exact.id];
+  }
+
   const kwRules = [
     [/strip|wheel|scroll|mouse light/i, /strip|wheel|scroll|mouse light/i],
     [/dpi/i, /dpi/i],
@@ -315,13 +321,8 @@ function findLightsForZone(zoneId, zoneName, dev) {
     }
   }
 
-  if (!Number.isNaN(numZid)) {
-    const exact = dev.lights.find((l) => l.id === numZid);
-    if (exact) return [exact.id];
-    // For multi-zone chassis views (10..14), map evenly across available chassis LEDs
-    if (numZid >= 10 && usable.length > 0) {
-      return [usable[(numZid - 10) % usable.length].id];
-    }
+  if (!Number.isNaN(numZid) && numZid >= 10 && usable.length > 0) {
+    return [usable[(numZid - 10) % usable.length].id];
   }
   return [];
 }
@@ -546,6 +547,23 @@ function applyTouchpadVisualStyle(tpEl, color) {
 
 function applySvgZoneVisualStyle(zoneEl, color) {
   if (!zoneEl) return;
+  if (zoneEl.classList && (zoneEl.classList.contains('chassis-led-seg') || zoneEl.classList.contains('chassis-icon-card'))) {
+    const isSeg = zoneEl.classList.contains('chassis-led-seg');
+    const fallback = isSeg ? '#1e293b' : '#475569';
+    if (zoneEl.style && typeof zoneEl.style.setProperty === 'function') {
+      zoneEl.style.setProperty('--zone-color', color || fallback);
+    }
+    if (isSeg) {
+      zoneEl.style.background = color || '#1e293b';
+      zoneEl.style.boxShadow = color ? `0 0 10px ${color}` : 'none';
+    } else {
+      const glyph = zoneEl.querySelector ? zoneEl.querySelector('.chassis-icon-glyph, .chassis-power-ring') : null;
+      if (glyph && glyph.style) {
+        glyph.style.filter = color ? `drop-shadow(0 0 10px ${color})` : 'none';
+      }
+    }
+    return;
+  }
   const paint = color || '#1e293b';
   const tag = zoneEl.tagName.toLowerCase();
   if (tag === 'g') {
@@ -813,8 +831,37 @@ function initNavigation() {
   });
 
   // Mouse, Chassis & Touchpad zones
+  let chassisDragMoved = false;
+  let isChassisDragging = false;
+  window.addEventListener('mouseup', () => { isChassisDragging = false; });
+
   document.querySelectorAll('.mouse-zone, .chassis-zone, .touchpad-zone').forEach((zone) => {
+    if (zone.classList && zone.classList.contains('chassis-led-seg')) {
+      zone.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isChassisDragging = true;
+        chassisDragMoved = false;
+        state.selectedHwLights.clear();
+        if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
+        state.selectedTargets.add(zone.dataset.zoneId);
+        refreshSelectionUI();
+      });
+      zone.addEventListener('mouseenter', (e) => {
+        if (!isChassisDragging || !(e.buttons & 1)) return;
+        chassisDragMoved = true;
+        state.selectedTargets.add(zone.dataset.zoneId);
+        refreshSelectionUI();
+        const lbl = document.getElementById('chassis-zone-label');
+        if (lbl) lbl.textContent = `Selected ${state.selectedTargets.size} chassis LEDs`;
+      });
+    }
     zone.addEventListener('click', (e) => {
+      if (chassisDragMoved && zone.classList && zone.classList.contains('chassis-led-seg')) {
+        chassisDragMoved = false;
+        loadSelectionColorAndBrightness();
+        return;
+      }
+      chassisDragMoved = false;
       state.selectedHwLights.clear();
       if (!e.ctrlKey && !e.shiftKey) state.selectedTargets.clear();
       toggleTargetSelection(zone.dataset.zoneId);
@@ -825,6 +872,28 @@ function initNavigation() {
       }
     });
   });
+
+  const bindChassisQuick = (id, selector, labelText) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      state.selectedHwLights.clear();
+      state.selectedTargets.clear();
+      if (selector) {
+        document.querySelectorAll(selector).forEach((el) => {
+          if (el.dataset && el.dataset.zoneId) state.selectedTargets.add(el.dataset.zoneId);
+        });
+      }
+      refreshSelectionUI();
+      const lbl = document.getElementById('chassis-zone-label');
+      if (lbl) lbl.textContent = labelText;
+      if (state.selectedTargets.size > 0) loadSelectionColorAndBrightness();
+    });
+  };
+  bindChassisQuick('chassis-sel-rear', '#rear-lightbar-strip .chassis-zone', 'Selected: Rear Lightbar (#0 – #30)');
+  bindChassisQuick('chassis-sel-touchpad', '#touchpad-strip .chassis-zone', 'Selected: RGB Touchpad (#35 – #44)');
+  bindChassisQuick('chassis-sel-all', '#view-chassis .chassis-zone', 'Selected: All AA18250 Chassis Zones (45 LEDs)');
+  bindChassisQuick('chassis-sel-clear', null, 'Click any chassis zone (including Rear, Fans, Lid, Power Button, or Touchpad) to customize');
 }
 
 function sendPowerButtonColor(colorHex) {
@@ -2164,18 +2233,29 @@ function applyFullState(data) {
 
   const pGrid = document.getElementById('profiles-grid');
   pGrid.innerHTML = '';
+  const escHtml = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   state.profiles.forEach((p) => {
     if (p.isPreset) return;
     if (p.active && !activePreset) document.getElementById('hud-profile').textContent = p.name;
     const card = document.createElement('div');
     card.className = `profile-card ${p.active ? 'active' : ''}`;
+    const safeName = escHtml(p.name);
     card.innerHTML = `
       <div>
-        <strong>${p.name}</strong>
+        <div class="profile-header-row" id="prof-name-view-${p.id}">
+          <strong>${safeName}</strong>
+          <button type="button" class="qs-btn" title="Rename profile" onclick="startRenameProf(${p.id})">&#9998; Rename</button>
+        </div>
+        <div class="profile-rename-row" id="prof-name-edit-${p.id}" style="display:none;">
+          <input type="text" class="profile-rename-input" id="prof-rename-input-${p.id}" value="${safeName}" maxlength="48" onkeydown="if(event.key==='Enter')saveRenameProf(${p.id});else if(event.key==='Escape')cancelRenameProf(${p.id});" />
+          <button type="button" class="btn-secondary" onclick="saveRenameProf(${p.id})">Save</button>
+          <button type="button" class="qs-btn" onclick="cancelRenameProf(${p.id})">Cancel</button>
+        </div>
         <div class="hint-text">${p.isDefault ? 'System Default' : 'Custom Profile'}</div>
       </div>
       <div class="profile-actions">
         <button class="btn-secondary" onclick="activateProf(${p.id})">${p.active ? 'Active' : 'Activate'}</button>
+        <button class="qs-btn" onclick="duplicateProf(${p.id})">Duplicate</button>
         ${!p.isDefault ? `<button class="qs-btn" onclick="deleteProf(${p.id})">Delete</button>` : ''}
       </div>
     `;
@@ -2233,6 +2313,30 @@ function renderHardwareLights() {
 
 window.activateProf = (id) => sendCommand({ cmd: 'activateProfile', id });
 window.deleteProf = (id) => sendCommand({ cmd: 'deleteProfile', id });
+window.duplicateProf = (id) => sendCommand({ cmd: 'duplicateProfile', id });
+window.startRenameProf = (id) => {
+  const viewRow = document.getElementById(`prof-name-view-${id}`);
+  const editRow = document.getElementById(`prof-name-edit-${id}`);
+  const inp = document.getElementById(`prof-rename-input-${id}`);
+  if (viewRow) viewRow.style.display = 'none';
+  if (editRow) editRow.style.display = 'flex';
+  if (inp) {
+    if (typeof inp.focus === 'function') inp.focus();
+    if (typeof inp.select === 'function') inp.select();
+  }
+};
+window.cancelRenameProf = (id) => {
+  const viewRow = document.getElementById(`prof-name-view-${id}`);
+  const editRow = document.getElementById(`prof-name-edit-${id}`);
+  if (editRow) editRow.style.display = 'none';
+  if (viewRow) viewRow.style.display = 'flex';
+};
+window.saveRenameProf = (id) => {
+  const inp = document.getElementById(`prof-rename-input-${id}`);
+  const name = inp ? inp.value.trim() : '';
+  if (!name) return;
+  sendCommand({ cmd: 'renameProfile', id, name });
+};
 
 function initWindowControls() {
   const minBtn = document.getElementById('win-min');

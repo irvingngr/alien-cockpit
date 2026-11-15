@@ -417,20 +417,53 @@ static void EnsureDefaultDeviceMappings() {
             }
         }
 
-        // Ensure AA18250 AW-ELC (PID 0x0551) has all chassis zones (0..79 or reported v4MaxZones) while preserving user bindings
+        // Ensure AA18250 AW-ELC (PID 0x0551) has the exact 45-LED hardware mapping (0..44)
         if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.pid == 0x0551) {
-            int targetCount = (dev.dev->v4MaxZones > 0) ? static_cast<int>(dev.dev->v4MaxZones) : 80;
+            auto getCanonical0551Name = [](byte lid, WORD& outFlags) -> std::string {
+                outFlags = 0;
+                if (lid <= 30) return "Rear Lightbar " + std::to_string(lid + 1);
+                if (lid == 31) { outFlags = ALIENFX_FLAG_POWER; return "Power Button"; }
+                if (lid == 32) return "Lid Alienhead";
+                if (lid == 33) return "Right Fan";
+                if (lid == 34) return "Left Fan";
+                if (lid >= 35 && lid <= 44) return "Touchpad " + std::to_string(lid - 34);
+                return "LED Zone " + std::to_string(lid);
+            };
+            auto isGenericZoneName = [](const std::string& nm) -> bool {
+                return nm.empty() || nm.rfind("LED Zone ", 0) == 0 || nm.rfind("Light ", 0) == 0 ||
+                    nm == "Rear" || nm == "Logo" || nm == "Left" || nm == "Right" || nm == "Power";
+            };
+            int targetCount = (dev.dev->v4MaxZones > 0 && dev.dev->v4MaxZones < 45)
+                ? static_cast<int>(dev.dev->v4MaxZones)
+                : 45;
             for (int i = 0; i < targetCount; ++i) {
                 byte lid = static_cast<byte>(i);
-                bool exists = std::any_of(dev.lights.begin(), dev.lights.end(),
+                WORD cFlags = 0;
+                std::string cName = getCanonical0551Name(lid, cFlags);
+                auto it = std::find_if(dev.lights.begin(), dev.lights.end(),
                     [lid](const AlienFX_SDK::Afx_light& l) { return l.lightid == lid; });
-                if (!exists) {
+                if (it == dev.lights.end()) {
                     AlienFX_SDK::Afx_light nl{};
                     nl.lightid = lid;
-                    nl.flags = 0;
-                    nl.name = "LED Zone " + std::to_string(i);
+                    nl.flags = cFlags;
+                    nl.name = cName;
                     dev.lights.push_back(nl);
                     anyAdded = true;
+                } else if (isGenericZoneName(it->name)) {
+                    it->name = cName;
+                    if (cFlags != 0) it->flags |= cFlags;
+                    anyAdded = true;
+                } else if (lid == 31 && (it->flags & ALIENFX_FLAG_POWER) == 0) {
+                    it->flags |= ALIENFX_FLAG_POWER;
+                    anyAdded = true;
+                }
+            }
+            for (auto lit = dev.lights.begin(); lit != dev.lights.end(); ) {
+                if (lit->lightid >= targetCount && lit->name.rfind("LED Zone ", 0) == 0) {
+                    lit = dev.lights.erase(lit);
+                    anyAdded = true;
+                } else {
+                    ++lit;
                 }
             }
         }
