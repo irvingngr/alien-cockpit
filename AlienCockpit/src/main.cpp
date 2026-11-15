@@ -503,7 +503,9 @@ static void EnsureDefaultAuroraProfile() {
     if (conf->activeProfile->id != 0 || !conf->activeProfile->lightsets.empty()) return;
 
     DWORD nextGid = 0x10001;
-    for (const auto& g : conf->afx_dev.GetGroups()) {
+    auto* groups = conf->afx_dev.GetGroups();
+    if (!groups) return;
+    for (const auto& g : *groups) {
         if (g.gid >= nextGid) nextGid = g.gid + 1;
     }
 
@@ -521,7 +523,7 @@ static void EnsureDefaultAuroraProfile() {
     }
     if (grp.lights.empty()) return;
 
-    conf->afx_dev.GetGroups().push_back(grp);
+    groups->push_back(grp);
     conf->afx_dev.SaveMappings();
 
     groupset gs{};
