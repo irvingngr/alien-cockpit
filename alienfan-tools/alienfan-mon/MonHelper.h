@@ -10,12 +10,12 @@ private:
 	ThreadHelper* monThread = NULL;
 	short oldPower = 0;
 	bool stopped = true;
-	mutable std::mutex dataMutex;
 	void Run();
 	void Finish();
 	void ToggleMode();
 	GUID* sch_guid, perfset;
 public:
+	mutable std::mutex dataMutex;
 	AlienFan_SDK::Control* acpi;
 	bool inControl = true;
 	map<byte,WORD> lastBoost, fanRpm;
