@@ -917,15 +917,14 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
         g_probeActive = true;
         g_introActive = false;
-        if (dev) {
-            fxhl->ProbeLight(dev, lid);
+        if (dev && dev->present && dev->dev) {
+            fxhl->QueueProbeLight(dev->pid, lid);
         }
         return "{\"ok\":true,\"probing\":true}";
     }
 
     if (cmd == "endProbe" && conf && fxhl) {
         g_probeActive = false;
-        fxhl->oldtest = -1;
         g_forceFullSoftwareFrame = true;
         BeginCrossfade(500);
         fxhl->SetState(true);

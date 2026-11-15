@@ -98,8 +98,15 @@ namespace AlienFX_SDK {
 
 	bool Functions::PrepareAndSend(const byte *command, vector<Afx_icommand> *mods) {
 
-		if (this && devHandle && !abortRequested.load(std::memory_order_acquire)) { // Is device initialized?
+		if (!this || !devHandle || abortRequested.load(std::memory_order_acquire)) { // Is device initialized?
+			return false;
+		}
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
+		if (!devHandle || abortRequested.load(std::memory_order_acquire)) {
+			return false;
+		}
 
+		{
 			byte buffer[MAX_BUFFERSIZE];
 			DWORD written = 0;
 			BOOL /*res = false, */needV8Feature = true;
@@ -122,9 +129,6 @@ namespace AlienFX_SDK {
 				BOOL ok = HidD_SetOutputReport(devHandle, buffer, length);
 				if (!ok) {
 					ok = HidD_SetFeature(devHandle, buffer, length);
-				}
-				if (!ok && WriteFile(devHandle, buffer, length, &written, NULL)) {
-					ok = TRUE;
 				}
 				if (ok && !abortRequested.load(std::memory_order_acquire)) Sleep(2);
 				return ok != FALSE;
@@ -377,6 +381,7 @@ namespace AlienFX_SDK {
 #endif
 
 	bool Functions::Reset() {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		switch (version) {
 		//case API_V9:
 		//	if (chain) {
@@ -420,6 +425,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::UpdateColors() {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		if (inSet) {
 			switch (version) {
 			//case API_V9:
@@ -437,8 +443,10 @@ namespace AlienFX_SDK {
 			} break;
 			case API_V4:
 			{
-				inSet = !PrepareAndSend(COMMV4_control);
-				if (!abortRequested.load(std::memory_order_acquire)) Sleep(15);
+				bool ok = PrepareAndSend(COMMV4_control);
+				inSet = false;
+				if (ok && !abortRequested.load(std::memory_order_acquire)) Sleep(15);
+				return ok;
 			} break;
 			case API_V3: case API_V2:
 			{
@@ -470,6 +478,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetMultiColor(vector<UCHAR> *lights, Afx_action c) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		bool val = false;
 		Afx_lightblock act{ 0, {c} };
 		vector<Afx_icommand> mods;
@@ -566,6 +575,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetMultiAction(vector<Afx_lightblock> *act, bool save) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		bool val = true;
 		vector<Afx_icommand> mods;
 
@@ -658,7 +668,7 @@ namespace AlienFX_SDK {
 				UpdateColors();
 
 				if (pid == 0x0551) {
-					if (save && bright > 0 && !turnOnIds.empty()) {
+					if ((save || !v4TurnedOn) && bright > 0 && !turnOnIds.empty()) {
 						byte dim = (byte)(0x64 - ClampInt(bright, 0, 100));
 						for (byte lid : turnOnIds) {
 							if (abortRequested.load(std::memory_order_acquire)) break;
@@ -668,6 +678,7 @@ namespace AlienFX_SDK {
 							};
 							PrepareAndSend(COMMV4_turnOn, &mods);
 						}
+						v4TurnedOn = true;
 					}
 				} else {
 					if (save && !abortRequested.load(std::memory_order_acquire)) {
@@ -738,6 +749,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetAction(Afx_lightblock* act) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		if (act->act.empty())
 			return false;
 		if (!inSet) Reset();
@@ -820,6 +832,7 @@ namespace AlienFX_SDK {
 	}
 
 	void Functions::SaveLightsState(vector<Afx_lightblock>* act) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		if (inSet)
 			UpdateColors();
 		switch (version) {
@@ -875,6 +888,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetPowerAction(Afx_lightblock *act) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		UpdateColors();
 		switch (version) {
 		// ToDo - APIv8 profile save
@@ -959,6 +973,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetBrightness(BYTE brightness, BYTE gbr, vector<Afx_light> *mappings, bool power) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		// return true if update needed
 		DebugPrint("State update: PID: " + to_string(pid) + ", brightness: " + to_string(brightness) + ", power: " + to_string(power) + "\n");
 
@@ -1005,6 +1020,7 @@ namespace AlienFX_SDK {
 					PrepareAndSend(COMMV4_turnOn, &mods);
 				}
 			}
+			v4TurnedOn = (bright > 0);
 			return true;
 		}
 		case API_V3: case API_V2:
@@ -1027,6 +1043,7 @@ namespace AlienFX_SDK {
 	}
 
 	bool Functions::SetGlobalEffects(byte effType, byte mode, byte nc, byte tempo, Afx_colorcode act1, Afx_colorcode act2) {
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		vector<Afx_icommand> mods;
 		switch (version) {
 		case API_V8:
@@ -1050,7 +1067,7 @@ namespace AlienFX_SDK {
 	}
 
 	BYTE Functions::GetDeviceStatus() {
-
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
 		byte buffer[MAX_BUFFERSIZE]{};
 		if (devHandle && !abortRequested.load(std::memory_order_acquire) && version >= 0 && version <= API_V8) {
 			buffer[0] = reportIDList[version];
@@ -1459,7 +1476,9 @@ namespace AlienFX_SDK {
 
 	bool Functions::EmergencyWhiteV4()
 	{
-		if (version != API_V4 || !devHandle || abortRequested.load(std::memory_order_acquire)) return false;
+		if (!this || !devHandle || version != API_V4 || abortRequested.load(std::memory_order_acquire)) return false;
+		std::lock_guard<std::recursive_mutex> lock(ioMutex);
+		if (!devHandle || abortRequested.load(std::memory_order_acquire)) return false;
 		if (inSet) UpdateColors();
 		WaitForReady();
 
@@ -1493,6 +1512,7 @@ namespace AlienFX_SDK {
 			};
 			PrepareAndSend(COMMV4_turnOn, &tmods);
 		}
+		v4TurnedOn = true;
 
 		// Legacy V4 devices (non-0x0551) also use the 0x61 hardware bank
 		if (pid != 0x0551 && !abortRequested.load(std::memory_order_acquire)) {
@@ -1610,12 +1630,20 @@ namespace AlienFX_SDK {
 							BOOL gFeat0 = HidD_GetFeature(h, preFeat, repLen);
 							qbuf[0] = 0x00; qbuf[1] = 0x03; qbuf[2] = 0x20; qbuf[3] = 0x02;
 							BOOL sOut = HidD_SetOutputReport(h, qbuf, repLen);
-							BOOL sFeat = (!sOut) ? HidD_SetFeature(h, qbuf, repLen) : FALSE;
+							DWORD sOutErr = sOut ? 0 : GetLastError();
+							BOOL sFeat = FALSE;
+							DWORD sFeatErr = 0;
+							if (!sOut) {
+								sFeat = HidD_SetFeature(h, qbuf, repLen);
+								sFeatErr = sFeat ? 0 : GetLastError();
+							}
 							if (sOut || sFeat) Sleep(30);
 							BOOL gIn1 = HidD_GetInputReport(h, postIn, repLen);
 							BOOL gFeat1 = HidD_GetFeature(h, postFeat, repLen);
 							entry.probeInfo = "GET_PLATFORM sOut=" + to_string(sOut ? 1 : 0) +
+								" sOutErr=" + to_string(sOutErr) +
 								" sFeat=" + to_string(sFeat ? 1 : 0) +
+								" sFeatErr=" + to_string(sFeatErr) +
 								" preIn=" + (gIn0 ? formatHex(preIn, 16) : string("ERR")) +
 								" preFeat=" + (gFeat0 ? formatHex(preFeat, 16) : string("ERR")) +
 								" postIn=" + (gIn1 ? formatHex(postIn, 16) : string("ERR")) +

@@ -1,6 +1,7 @@
 #pragma once
 #include <wtypes.h>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include <string>
 
@@ -124,8 +125,10 @@ namespace AlienFX_SDK {
 
 		HANDLE devHandle = NULL; // USB device handle, NULL if not initialized
 		void* ACPIdevice = NULL; // ACPI device object pointer
+		mutable std::recursive_mutex ioMutex;
 
 		bool inSet = false;
+		bool v4TurnedOn = false;
 
 		int length = -1; // HID report length
 		byte chain = 1; // seq. number for APIv1-v3

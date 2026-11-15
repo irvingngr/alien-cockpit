@@ -10,7 +10,7 @@ struct LightEventData {
 
 struct LightQueryElement {
 	byte light;	  // lightID or forced state
-	byte command; // 0 - color, 1 - update, 2 - set brightness, 3 - device clean, 4 - power button, 5 - light state clean
+	byte command; // 0 - color, 1 - update, 2 - set brightness, 3 - device clean, 4 - power button, 5 - light state clean, 6 - emergency white, 7 - probe LED
 	byte actsize;
 	AlienFX_SDK::Afx_action actions[9];
 };
@@ -66,7 +66,8 @@ public:
 	void Stop();
 	void Refresh(bool force = false);
 	void TestLight(AlienFX_SDK::Afx_device* dev, int id, bool force = false, bool wp=false);
-	void ProbeLight(AlienFX_SDK::Afx_device* dev, int id);
+	void ProbeLight(AlienFX_SDK::Afx_device* dev, int id, int* prevIdPtr = nullptr);
+	void QueueProbeLight(WORD pid, int id);
 	bool CheckEvent(LightEventData* eData, event* e);
 	void RefreshZone(groupset* map, bool update = true);
 	void RefreshCounters(bool fromRefresh = false);

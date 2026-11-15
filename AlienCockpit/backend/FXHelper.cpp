@@ -149,9 +149,10 @@ void FXHelper::TestLight(AlienFX_SDK::Afx_device* dev, int id, bool force, bool 
 	DebugPrint("\n");
 }
 
-void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
+void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id, int* prevIdPtr)
 {
 	if (!dev || !dev->present || !dev->dev) return;
+	int& prevId = prevIdPtr ? *prevIdPtr : oldtest;
 	AlienFX_SDK::Afx_action off{ 0 };
 	if (dev->dev->version == AlienFX_SDK::API_V4) {
 		off.r = off.g = off.b = 1;
@@ -160,29 +161,26 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 	red.r = 255;
 
 	if (dev->dev->version == AlienFX_SDK::API_V4) {
-		vector<byte> offIds;
-		offIds.reserve(dev->lights.size() + 1);
-		for (const auto& l : dev->lights) {
-			if ((int)l.lightid != id && !(l.flags & ALIENFX_FLAG_POWER)) {
-				offIds.push_back((byte)l.lightid);
-			}
-		}
-		if (oldtest >= 0 && oldtest != id) {
-			bool alreadyQueued = false;
-			for (byte q : offIds) {
-				if (q == (byte)oldtest) { alreadyQueued = true; break; }
-			}
-			if (!alreadyQueued) offIds.push_back((byte)oldtest);
-		}
 		dev->dev->Reset();
-		if (!offIds.empty()) {
-			dev->dev->SetMultiColor(&offIds, off);
+		if (prevId < 0) {
+			vector<byte> offIds;
+			offIds.reserve(dev->lights.size());
+			for (const auto& l : dev->lights) {
+				if ((int)l.lightid != id && !(l.flags & ALIENFX_FLAG_POWER)) {
+					offIds.push_back((byte)l.lightid);
+				}
+			}
+			if (!offIds.empty()) {
+				dev->dev->SetMultiColor(&offIds, off);
+			}
+		} else if (prevId != id && !(conf->afx_dev.GetFlags(dev, (WORD)prevId) & ALIENFX_FLAG_POWER)) {
+			dev->dev->SetColor((byte)prevId, off);
 		}
 		if (id >= 0) {
 			dev->dev->SetColor((byte)id, red);
-			oldtest = id;
+			prevId = id;
 		} else {
-			oldtest = -1;
+			prevId = -1;
 		}
 		dev->dev->UpdateColors();
 		if (id >= 0) {
@@ -192,7 +190,7 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 		return;
 	}
 
-	if (!dev->lights.empty()) {
+	if (prevId < 0 && !dev->lights.empty()) {
 		vector<byte> opLights;
 		for (auto lIter = dev->lights.begin(); lIter != dev->lights.end(); lIter++) {
 			if ((int)lIter->lightid != id && !(lIter->flags & ALIENFX_FLAG_POWER))
@@ -202,18 +200,23 @@ void FXHelper::ProbeLight(AlienFX_SDK::Afx_device* dev, int id)
 			dev->dev->SetMultiColor(&opLights, off);
 			dev->dev->UpdateColors();
 		}
-	}
-	if (oldtest >= 0 && oldtest != id) {
-		dev->dev->SetColor((byte)oldtest, off);
+	} else if (prevId >= 0 && prevId != id && !(conf->afx_dev.GetFlags(dev, (WORD)prevId) & ALIENFX_FLAG_POWER)) {
+		dev->dev->SetColor((byte)prevId, off);
 		dev->dev->UpdateColors();
 	}
 	if (id >= 0) {
 		dev->dev->SetColor((byte)id, red);
-		oldtest = id;
+		prevId = id;
 		dev->dev->UpdateColors();
 	} else {
-		oldtest = -1;
+		prevId = -1;
 	}
+}
+
+void FXHelper::QueueProbeLight(WORD pid, int id)
+{
+	LightQueryElement lqe{ static_cast<byte>(id < 0 ? 0 : (id > 255 ? 255 : id)), 7, 0 };
+	QueryCommand(pid, lqe);
 }
 
 bool FXHelper::CheckEvent(LightEventData* eData, event* e) {
@@ -841,8 +844,7 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 	WORD pid = ld->pid;
 	DeviceUpdateQuery* lightQuery = &src->devLightQuery[pid];
 	LightQueryElement current;
-
-	AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
+	int probePrevId = -1;
 
 	HANDLE waitArray[2]{ lightQuery->haveNewElement, src->stopQuery };
 	vector<AlienFX_SDK::Afx_lightblock> dev_query;
@@ -859,10 +861,26 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 			}
 			current = lightQuery->lightQuery.front();
 			lightQuery->lightQuery.pop();
+			if (current.command == 7) {
+				while (!lightQuery->lightQuery.empty() && lightQuery->lightQuery.front().command == 7) {
+					current = lightQuery->lightQuery.front();
+					lightQuery->lightQuery.pop();
+				}
+			}
 			src->modifyQuery.unlockWrite();
 
+			AlienFX_SDK::Afx_device* dev = conf ? conf->afx_dev.GetDeviceById(pid) : nullptr;
+
 			switch (current.command) {
+			case 7: // probe LED
+				lightQuery->lstate.clear();
+				dev_query.clear();
+				if (dev && dev->present && dev->dev) {
+					src->ProbeLight(dev, (int)current.light, &probePrevId);
+				}
+				break;
 			case 6: // emergency white diagnostic test
+				probePrevId = -1;
 				lightQuery->lstate.clear();
 				dev_query.clear();
 				if (dev && dev->present && dev->dev && dev->dev->version == AlienFX_SDK::API_V4) {
@@ -870,9 +888,11 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 				}
 				break;
 			case 5: // clear light states
+				probePrevId = -1;
 				lightQuery->lstate.clear();
 				break;
 			case 3: { // scheduled to remove
+				probePrevId = -1;
 				if (dev && dev->dev) {
 					delete dev->dev;
 					dev->dev = NULL;
@@ -884,8 +904,7 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 				byte fbright = (byte)(current.light ?
 					conf->stateDimmed && conf->dimPowerButton ? conf->dimmingPower : conf->fullPower
 					: src->finalBrightness);
-				//AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
-				if (dev && dev->present) {
+				if (dev && dev->present && dev->dev) {
 					if (conf->afx_dev.SetDeviceBrightness(&(*dev), fbright, pbstate)) {
 						src->ClearAndRefresh();
 					}
@@ -893,9 +912,8 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 				//DebugPrint("Set brightness " + to_string(src->finalBrightness) + " for device " + to_string(dev->pid) + "\n");
 			} break;
 			case 1: { // update command
-				//AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
 				//DebugPrint("Updating device " + to_string(devQ->first) + ", " + to_string(devQ->second.size()) + " lights\n");
-				if (dev && dev_query.size() && dev->present && conf->activeProfile->effects[dev->devID].empty()) {
+				if (dev && dev->dev && dev_query.size() && dev->present && conf && conf->activeProfile && conf->activeProfile->effects[dev->devID].empty()) {
 					//lightQuery->inUpdate = true;
 					dev->dev->SetMultiAction(&dev_query, current.light == 1);
 					//DebugPrint("Set action complete\n");
