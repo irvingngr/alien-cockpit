@@ -1,5 +1,6 @@
 #pragma once
 #include <wtypes.h>
+#include <atomic>
 #include <vector>
 #include <string>
 
@@ -168,14 +169,18 @@ namespace AlienFX_SDK {
 		int version = API_UNKNOWN; // interface version, will stay at API_UNKNOWN if not initialized
 		byte bright = 100; // Last brightness set for device (0..100 scale for v4/v6/v7)
 		byte v4MaxZones = 0; // Reported hardware zone count for API_V4 (0 = unknown)
+		std::atomic<bool> abortRequested{ false };
 		string description; // device description
 
 		~Functions();
 
+		// Signal any in-progress HID wait or scan loop to abort immediately
+		void RequestAbort();
+
 		// Support function to send data to USB device
 		bool PrepareAndSend(const byte* command, vector<Afx_icommand>* mods = NULL);
 
-		// Diagnostic helper: energize channels 0..44 white on API_V4
+		// Diagnostic helper: energize channels cleanly on API_V4
 		bool EmergencyWhiteV4();
 
 		// Initialize device
@@ -353,6 +358,7 @@ namespace AlienFX_SDK {
 			DWORD openError = 0;
 			string product;
 			string path;
+			string probeInfo;
 		};
 		static vector<HidDiagEntry> CollectHardwareDiagnostics();
 	};

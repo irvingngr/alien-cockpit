@@ -18,6 +18,7 @@
 #include "MonHelper.h"
 #include "ConfigFan.h"
 #include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <sstream>
 
@@ -57,9 +58,34 @@ static bool g_trayAdded = false;
 static HANDLE g_hMutex = nullptr;
 static const UINT_PTR TIMER_TELEMETRY = 1;
 static const UINT_PTR TIMER_EFFECTS = 2;
-static std::vector<BatteryDeviceInfo> g_cachedBatteries;
-static ULONGLONG g_lastBatteryScanTick = 0;
+static const UINT WM_APP_WINDOW_DRAG = WM_APP + 10;
+static std::atomic<bool> g_exiting{ false };
+static bool g_isMovingOrSizing = false;
+static HANDLE g_telemetryStopEvent = nullptr;
+static HANDLE g_telemetryWakeEvent = nullptr;
+static HANDLE g_telemetryBatteryWakeEvent = nullptr;
+static HANDLE g_telemetryThread = nullptr;
 static HHOOK g_kbdHook = nullptr;
+
+static DWORD WINAPI TelemetryWorkerProc(LPVOID) {
+    HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    CockpitBridge::RefreshTelemetryCache(true);
+    ULONGLONG lastBattScan = GetTickCount64();
+    HANDLE waits[3] = { g_telemetryStopEvent, g_telemetryBatteryWakeEvent, g_telemetryWakeEvent };
+    while (!g_exiting.load(std::memory_order_acquire)) {
+        DWORD waitRes = WaitForMultipleObjects(3, waits, FALSE, 1500);
+        if (waitRes == WAIT_OBJECT_0 || g_exiting.load(std::memory_order_acquire)) {
+            break;
+        }
+        bool scanBatt = (waitRes == WAIT_OBJECT_0 + 1) || ((GetTickCount64() - lastBattScan) >= 4500);
+        CockpitBridge::RefreshTelemetryCache(scanBatt);
+        if (scanBatt) {
+            lastBattScan = GetTickCount64();
+        }
+    }
+    if (SUCCEEDED(hrCom)) CoUninitialize();
+    return 0;
+}
 
 static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN)) {
@@ -135,20 +161,18 @@ static std::wstring GetWebViewUserDataFolder() {
 }
 
 static void UpdateTrayIconAndTooltip(bool forceScan = false) {
-    if (!g_trayAdded || !conf) return;
+    if (!g_trayAdded || !conf || g_exiting.load(std::memory_order_acquire)) return;
     UINT iconRes = conf->lightsOn ? (conf->stateDimmed ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON) : IDI_ALIENFX_OFF;
     g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
 
     std::wstring tip = L"AlienCockpit | Lights: ";
     tip += (conf->lightsOn ? L"ON" : L"OFF");
 
-    ULONGLONG now = GetTickCount64();
-    if (forceScan || g_lastBatteryScanTick == 0 || (now - g_lastBatteryScanTick) >= 6000) {
-        g_cachedBatteries = BatteryMonitor::GetAllBatteries();
-        g_lastBatteryScanTick = now;
+    if (forceScan && g_telemetryBatteryWakeEvent) {
+        SetEvent(g_telemetryBatteryWakeEvent);
     }
 
-    for (const auto& b : g_cachedBatteries) {
+    for (const auto& b : CockpitBridge::GetCachedBatteries()) {
         std::wstring part;
         std::wstring pctStr = (b.percentage < 0) ? L"Sleep" : (std::to_wstring(b.percentage) + L"%");
         if (b.type == "system") {
@@ -494,11 +518,12 @@ static void ShowTrayMenu(HWND hwnd) {
 
     SetForegroundWindow(hwnd);
     TrackPopupMenu(hMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, hwnd, nullptr);
+    PostMessageW(hwnd, WM_NULL, 0, 0);
     DestroyMenu(hMenu);
 }
 
 static void PostJsonToUI(const std::string& json) {
-    if (g_webview) {
+    if (g_webview && !g_exiting.load(std::memory_order_acquire)) {
         std::wstring wjson = Utf8ToWide(json);
         g_webview->PostWebMessageAsJson(wjson.c_str());
     }
@@ -509,15 +534,20 @@ static void InitWebView(HWND hwnd) {
     HRESULT hrEnv = CreateCoreWebView2EnvironmentWithOptions(nullptr, userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [hwnd](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
-                if (FAILED(result) || !env) {
-                    MessageBoxW(hwnd, L"Failed to initialize Microsoft Edge WebView2 Runtime.\nPlease ensure WebView2 Runtime is installed.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+                if (FAILED(result) || !env || g_exiting.load(std::memory_order_acquire)) {
+                    if (!g_exiting.load(std::memory_order_acquire)) {
+                        MessageBoxW(hwnd, L"Failed to initialize Microsoft Edge WebView2 Runtime.\nPlease ensure WebView2 Runtime is installed.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+                    }
                     return result;
                 }
                 env->CreateCoreWebView2Controller(hwnd,
                     Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                         [hwnd](HRESULT res, ICoreWebView2Controller* controller) -> HRESULT {
-                            if (FAILED(res) || !controller) {
-                                MessageBoxW(hwnd, L"Failed to create WebView2 controller.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+                            if (FAILED(res) || !controller || g_exiting.load(std::memory_order_acquire)) {
+                                if (controller) controller->Close();
+                                if (!g_exiting.load(std::memory_order_acquire)) {
+                                    MessageBoxW(hwnd, L"Failed to create WebView2 controller.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+                                }
                                 return res;
                             }
                             g_webviewController = controller;
@@ -539,6 +569,10 @@ static void InitWebView(HWND hwnd) {
                                 settings->put_IsStatusBarEnabled(FALSE);
                                 settings->put_AreDefaultContextMenusEnabled(FALSE);
                                 settings->put_IsZoomControlEnabled(FALSE);
+                                ComPtr<ICoreWebView2Settings9> settings9;
+                                if (SUCCEEDED(settings.As(&settings9))) {
+                                    settings9->put_IsNonClientRegionSupportEnabled(TRUE);
+                                }
                             }
 
                             // Map virtual host to local ui/ directory
@@ -553,13 +587,14 @@ static void InitWebView(HWND hwnd) {
                             g_webview->add_WebMessageReceived(
                                 Callback<ICoreWebView2WebMessageReceivedEventHandler>(
                                     [hwnd](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                                        if (g_exiting.load(std::memory_order_acquire)) return S_OK;
                                         LPWSTR msgRaw = nullptr;
                                         if (SUCCEEDED(args->get_WebMessageAsJson(&msgRaw)) && msgRaw) {
                                             std::string jsonStr = WideToUtf8(msgRaw);
                                             CoTaskMemFree(msgRaw);
                                             if (jsonStr.find("\"windowDrag\"") != std::string::npos) {
                                                 ReleaseCapture();
-                                                SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                                                PostMessageW(hwnd, WM_APP_WINDOW_DRAG, 0, 0);
                                                 return S_OK;
                                             }
                                             if (jsonStr.find("\"windowMinimize\"") != std::string::npos) {
@@ -688,16 +723,42 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
     }
 
+    case WM_ENTERSIZEMOVE:
+        g_isMovingOrSizing = true;
+        return 0;
+
+    case WM_EXITSIZEMOVE:
+        g_isMovingOrSizing = false;
+        return 0;
+
+    case WM_APP_WINDOW_DRAG:
+        ReleaseCapture();
+        SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        return 0;
+
     case WM_CLOSE:
         // Minimize to tray instead of quitting
         ShowWindow(hwnd, SW_HIDE);
         return 0;
 
+    case WM_QUERYENDSESSION:
+        return TRUE;
+
+    case WM_ENDSESSION:
+        if (wParam) {
+            g_exiting.store(true, std::memory_order_release);
+            DestroyWindow(hwnd);
+        }
+        return 0;
+
     case WM_TIMER:
+        if (g_exiting.load(std::memory_order_acquire)) return 0;
         if (wParam == TIMER_TELEMETRY) {
-            UpdateTrayIconAndTooltip();
-            if (IsWindowVisible(hwnd) && g_webview) {
-                PostJsonToUI(CockpitBridge::BuildTelemetryJson());
+            if (!g_isMovingOrSizing) {
+                UpdateTrayIconAndTooltip();
+                if (IsWindowVisible(hwnd) && g_webview) {
+                    PostJsonToUI(CockpitBridge::BuildTelemetryJson());
+                }
             }
         } else if (wParam == TIMER_EFFECTS) {
             CockpitBridge::StepAnimatedEffects();
@@ -705,7 +766,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_DEVICECHANGE:
-        if (conf && fxhl && wParam == 0x0007 /* DBT_DEVNODES_CHANGED */) {
+        if (conf && fxhl && !g_exiting.load(std::memory_order_acquire) && wParam == 0x0007 /* DBT_DEVNODES_CHANGED */) {
             if (conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr)) {
                 EnsureDefaultDeviceMappings();
                 fxhl->ClearAndRefresh(true);
@@ -739,6 +800,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             UpdateTrayIconAndTooltip(false);
             PostJsonToUI(CockpitBridge::BuildFullStateJson());
         } else if (id == IDM_TRAY_EXIT) {
+            g_exiting.store(true, std::memory_order_release);
             DestroyWindow(hwnd);
         } else if (id >= IDM_TRAY_PROF_BASE && id < IDM_TRAY_PROF_BASE + 20 && conf && eve) {
             size_t idx = id - IDM_TRAY_PROF_BASE;
@@ -752,9 +814,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 
     case WM_DESTROY:
+        g_exiting.store(true, std::memory_order_release);
         KillTimer(hwnd, TIMER_TELEMETRY);
         KillTimer(hwnd, TIMER_EFFECTS);
+        if (g_kbdHook) {
+            UnhookWindowsHookEx(g_kbdHook);
+            g_kbdHook = nullptr;
+        }
         RemoveTrayIcon();
+        if (g_webviewController) {
+            g_webviewController->Close();
+            g_webviewController.Reset();
+        }
+        g_webview.Reset();
         PostQuitMessage(0);
         return 0;
     }
@@ -821,6 +893,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     fxhl->Start();
     eve->StartProfiles();
 
+    g_telemetryStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    g_telemetryWakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_telemetryBatteryWakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_telemetryThread = CreateThread(nullptr, 0, TelemetryWorkerProc, nullptr, 0, nullptr);
+
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = WndProc;
@@ -884,10 +961,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
         DispatchMessageW(&msg);
     }
 
+    g_exiting.store(true, std::memory_order_release);
     if (g_kbdHook) {
         UnhookWindowsHookEx(g_kbdHook);
         g_kbdHook = nullptr;
     }
+
+    if (g_telemetryStopEvent) {
+        SetEvent(g_telemetryStopEvent);
+    }
+    if (g_telemetryThread) {
+        WaitForSingleObject(g_telemetryThread, 2000);
+        CloseHandle(g_telemetryThread);
+        g_telemetryThread = nullptr;
+    }
+    if (g_telemetryStopEvent) { CloseHandle(g_telemetryStopEvent); g_telemetryStopEvent = nullptr; }
+    if (g_telemetryWakeEvent) { CloseHandle(g_telemetryWakeEvent); g_telemetryWakeEvent = nullptr; }
+    if (g_telemetryBatteryWakeEvent) { CloseHandle(g_telemetryBatteryWakeEvent); g_telemetryBatteryWakeEvent = nullptr; }
+
+    if (g_webviewController) {
+        g_webviewController->Close();
+        g_webviewController.Reset();
+    }
+    g_webview.Reset();
 
     // Graceful shutdown
     if (eve) {

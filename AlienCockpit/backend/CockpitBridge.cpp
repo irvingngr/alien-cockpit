@@ -7,6 +7,7 @@
 #include "StartupManager.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
+#include <winsvc.h>
 #include <shlobj.h>
 #include <algorithm>
 #include <cmath>
@@ -15,6 +16,8 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+
+#pragma comment(lib, "advapi32.lib")
 
 extern ConfigHandler* conf;
 extern FXHelper* fxhl;
@@ -41,6 +44,11 @@ static std::vector<WaterDrop> g_waterDrops;
 static std::mutex g_dropMutex;
 static DWORD g_lastDropVk = 0;
 static ULONGLONG g_lastDropTick = 0;
+
+static std::mutex g_telemetryMutex;
+static std::vector<BatteryDeviceInfo> g_cachedBatteries;
+static bool g_hasBatteryCache = false;
+static std::string g_cachedTelemetryJson;
 
 struct CrossfadeState {
     bool active = false;
@@ -144,7 +152,7 @@ static int GetLiveCpuPercent() {
     return lastPct;
 }
 
-std::string CockpitBridge::BuildTelemetryJson() {
+void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
     SimpleJson::Value root = SimpleJson::Value::Object();
     root["type"] = "telemetry";
 
@@ -161,7 +169,7 @@ std::string CockpitBridge::BuildTelemetryJson() {
 
     bool acpiReady = (mon != nullptr && mon->acpi != nullptr && mon->acpi->isSupported);
     if (acpiReady) {
-        mon->GetSensorData(true);
+        mon->GetSensorData(false);
     }
 
     int liveTemp = 0;
@@ -187,10 +195,21 @@ std::string CockpitBridge::BuildTelemetryJson() {
     sys["ac"] = acOnline;
     root["system"] = sys;
 
+    std::vector<BatteryDeviceInfo> battsList;
+    if (scanBatteries || !g_hasBatteryCache) {
+        battsList = BatteryMonitor::GetAllBatteries();
+        std::lock_guard<std::mutex> lock(g_telemetryMutex);
+        g_cachedBatteries = battsList;
+        g_hasBatteryCache = true;
+    } else {
+        std::lock_guard<std::mutex> lock(g_telemetryMutex);
+        battsList = g_cachedBatteries;
+    }
+
     // Batteries & Low-Battery Mouse Red Alert (<= 15%)
     bool mouseLowBattAlert = false;
     SimpleJson::Value batts = SimpleJson::Value::Array();
-    for (const auto& b : BatteryMonitor::GetAllBatteries()) {
+    for (const auto& b : battsList) {
         bool isLowMouse = (b.type == "mouse" && b.percentage >= 0 && b.percentage <= 15 && !b.charging);
         if (isLowMouse) mouseLowBattAlert = true;
         SimpleJson::Value bo = SimpleJson::Value::Object();
@@ -250,7 +269,26 @@ std::string CockpitBridge::BuildTelemetryJson() {
     }
     root["thermals"] = fanData;
 
-    return root.dump();
+    std::string serialized = root.dump();
+    std::lock_guard<std::mutex> lock(g_telemetryMutex);
+    g_cachedTelemetryJson = std::move(serialized);
+}
+
+std::vector<BatteryDeviceInfo> CockpitBridge::GetCachedBatteries() {
+    std::lock_guard<std::mutex> lock(g_telemetryMutex);
+    return g_cachedBatteries;
+}
+
+std::string CockpitBridge::BuildTelemetryJson() {
+    {
+        std::lock_guard<std::mutex> lock(g_telemetryMutex);
+        if (!g_cachedTelemetryJson.empty()) {
+            return g_cachedTelemetryJson;
+        }
+    }
+    RefreshTelemetryCache(true);
+    std::lock_guard<std::mutex> lock(g_telemetryMutex);
+    return g_cachedTelemetryJson;
 }
 
 std::string CockpitBridge::BuildFullStateJson() {
@@ -877,6 +915,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             co["api"] = e.detectedApi;
             co["openError"] = static_cast<int>(e.openError);
             co["product"] = e.product;
+            co["probeInfo"] = e.probeInfo;
             co["path"] = e.path;
             ctrls.push(co);
         }
@@ -898,6 +937,53 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             mapped.push(mo);
         }
         resp["mappedDevices"] = mapped;
+
+        SimpleJson::Value services = SimpleJson::Value::Array();
+        SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_ENUMERATE_SERVICE);
+        if (scm) {
+            DWORD bytesNeeded = 0, svcCount = 0, resume = 0;
+            EnumServicesStatusExA(scm, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL,
+                nullptr, 0, &bytesNeeded, &svcCount, &resume, nullptr);
+            if (bytesNeeded > 0) {
+                std::vector<BYTE> sbuf(bytesNeeded);
+                if (EnumServicesStatusExA(scm, SC_ENUM_PROCESS_INFO, SERVICE_WIN32, SERVICE_STATE_ALL,
+                    sbuf.data(), bytesNeeded, &bytesNeeded, &svcCount, &resume, nullptr)) {
+                    auto toLower = [](std::string str) {
+                        for (char& ch : str) {
+                            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+                        }
+                        return str;
+                    };
+                    auto stateStr = [](DWORD st) -> const char* {
+                        switch (st) {
+                        case SERVICE_RUNNING: return "RUNNING";
+                        case SERVICE_STOPPED: return "STOPPED";
+                        case SERVICE_PAUSED: return "PAUSED";
+                        case SERVICE_START_PENDING: return "START_PENDING";
+                        case SERVICE_STOP_PENDING: return "STOP_PENDING";
+                        default: return "OTHER";
+                        }
+                    };
+                    const auto* entries = reinterpret_cast<const ENUM_SERVICE_STATUS_PROCESSA*>(sbuf.data());
+                    for (DWORD si = 0; si < svcCount; ++si) {
+                        std::string sname = entries[si].lpServiceName ? entries[si].lpServiceName : "";
+                        std::string dname = entries[si].lpDisplayName ? entries[si].lpDisplayName : "";
+                        std::string low = toLower(sname + " " + dname);
+                        if (low.find("alien") != std::string::npos ||
+                            low.find("awcc") != std::string::npos ||
+                            low.find("dell") != std::string::npos) {
+                            SimpleJson::Value so = SimpleJson::Value::Object();
+                            so["name"] = sname;
+                            so["displayName"] = dname;
+                            so["state"] = stateStr(entries[si].ServiceStatusProcess.dwCurrentState);
+                            services.push(so);
+                        }
+                    }
+                }
+            }
+            CloseServiceHandle(scm);
+        }
+        resp["services"] = services;
         return resp.dump();
     }
 
@@ -1129,6 +1215,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             mon->SetPowerMode(static_cast<byte>(std::clamp(rawMode, 0, 255)));
         }
         fan_conf->Save();
+        RefreshTelemetryCache(false);
         return BuildTelemetryJson();
     }
 

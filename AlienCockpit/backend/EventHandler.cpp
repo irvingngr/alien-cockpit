@@ -83,11 +83,13 @@ EventHandler::EventHandler()
 
 EventHandler::~EventHandler()
 {
-	//StopProfiles();
-	//ChangeAction(false);
-	//SetDisplayFreq(currentFreq);
-	delete aProcesses;
-	CloseHandle(acStop);
+	StopProfiles();
+	delete[] aProcesses;
+	aProcesses = NULL;
+	if (acStop) {
+		CloseHandle(acStop);
+		acStop = NULL;
+	}
 }
 
 void EventHandler::ChangePowerState()
@@ -291,19 +293,37 @@ void EventHandler::StopProfiles()
 	if (hEvent) {
 		DebugPrint("Profile hooks stop.\n");
 		UnhookWinEvent(hEvent);
-		UnhookWinEvent(cEvent);
-		UnhookWindowsHookEx(kEvent);
 		hEvent = NULL;
-		keyboardSwitchActive = false;
 	}
+	if (cEvent) {
+		UnhookWinEvent(cEvent);
+		cEvent = NULL;
+	}
+	if (kEvent) {
+		UnhookWindowsHookEx(kEvent);
+		kEvent = NULL;
+	}
+	keyboardSwitchActive = false;
 
-	if (ackEvent) {
-		// stop hooks and waiting procedure
-		SetEvent(acStop);
-		UnhookWindowsHookEx(ackEvent);
-		UnhookWindowsHookEx(acmEvent);
-		ackEvent = NULL;
-		CloseHandle(wasAction);
+	if (ackEvent || acmEvent || acThread) {
+		if (acStop) SetEvent(acStop);
+		if (ackEvent) {
+			UnhookWindowsHookEx(ackEvent);
+			ackEvent = NULL;
+		}
+		if (acmEvent) {
+			UnhookWindowsHookEx(acmEvent);
+			acmEvent = NULL;
+		}
+		if (acThread) {
+			WaitForSingleObject(acThread, 2000);
+			CloseHandle(acThread);
+			acThread = NULL;
+		}
+		if (wasAction) {
+			CloseHandle(wasAction);
+			wasAction = NULL;
+		}
 	}
 }
 

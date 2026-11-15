@@ -4,8 +4,8 @@
 class EventHandler
 {
 private:
-	HWINEVENTHOOK hEvent = NULL, cEvent;
-	HHOOK kEvent, ackEvent = NULL, acmEvent;
+	HWINEVENTHOOK hEvent = NULL, cEvent = NULL;
+	HHOOK kEvent = NULL, ackEvent = NULL, acmEvent = NULL;
 	DWORD maxProcess = 1024;
 	DWORD* aProcesses = NULL;
 
@@ -17,7 +17,7 @@ public:
 
 	bool keyboardSwitchActive = false;
 
-	HANDLE wasAction, acThread, acStop;
+	HANDLE wasAction = NULL, acThread = NULL, acStop = NULL;
 
 	// Power and display
 	void ChangePowerState();

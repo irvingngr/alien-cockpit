@@ -411,11 +411,26 @@ void FXHelper::Start() {
 void FXHelper::Stop() {
 	updateAllowed = false;
 	SetEvent(stopQuery);
+	if (conf) {
+		for (auto& d : conf->afx_dev.fxdevs) {
+			if (d.dev) {
+				d.dev->RequestAbort();
+			}
+		}
+	}
 	for (auto& devQuery : devLightQuery) {
-		WaitForSingleObject(devQuery.second.updateThread, 20000);
-		CloseHandle(devQuery.second.updateThread);
-		CloseHandle(devQuery.second.haveNewElement);
-		//devQuery.second.haveNewElement = NULL;
+		if (devQuery.second.updateThread) {
+			if (WaitForSingleObject(devQuery.second.updateThread, 1500) == WAIT_TIMEOUT) {
+				CancelSynchronousIo(devQuery.second.updateThread);
+				WaitForSingleObject(devQuery.second.updateThread, 1000);
+			}
+			CloseHandle(devQuery.second.updateThread);
+			devQuery.second.updateThread = NULL;
+		}
+		if (devQuery.second.haveNewElement) {
+			CloseHandle(devQuery.second.haveNewElement);
+			devQuery.second.haveNewElement = NULL;
+		}
 		DebugPrint("Light updates stopped for device " + to_string(devQuery.first) + ".\n");
 	}
 	devLightQuery.clear();
@@ -828,7 +843,7 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
 	while (WaitForMultipleObjects(2, waitArray, false, INFINITE) == WAIT_OBJECT_0) {
-		while (true) {
+		while (WaitForSingleObject(src->stopQuery, 0) != WAIT_OBJECT_0) {
 			src->modifyQuery.lockWrite();
 			if (lightQuery->lightQuery.empty()) {
 				ResetEvent(lightQuery->haveNewElement);
@@ -851,11 +866,11 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 				lightQuery->lstate.clear();
 				break;
 			case 3: { // scheduled to remove
-				//AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
-				delete dev->dev;
-				dev->dev = NULL;
+				if (dev && dev->dev) {
+					delete dev->dev;
+					dev->dev = NULL;
+				}
 				lightQuery->lstate.clear();
-				//dev_query.clear();
 			} break;
 			case 2: { // set brightness
 				bool pbstate = current.light || src->finalPBState;// , needRefresh = false;

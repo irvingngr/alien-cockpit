@@ -1925,10 +1925,17 @@ function renderHardwareDiagnostics(data) {
       lines.push(`  • ${m.name} (${m.vid}:${m.pid}) present=${m.present} API=v${m.version} v4MaxZones=${m.v4MaxZones} lights=${m.lightCount}`);
     });
   }
+  if (Array.isArray(data.services)) {
+    lines.push(`[Services: ${data.services.length}]`);
+    data.services.forEach((s) => {
+      lines.push(`  • ${s.name} (${s.displayName}) state=${s.state}`);
+    });
+  }
   if (Array.isArray(data.controllers)) {
     lines.push(`[HID Controllers: ${data.controllers.length}]`);
     data.controllers.forEach((c) => {
       lines.push(`  • ${c.vid}:${c.pid} UP=${c.usagePage} U=${c.usage} API=${c.api} in=${c.inLen} out=${c.outLen} feat=${c.featLen} err=${c.openError} | ${c.product || ''}`);
+      if (c.probeInfo) lines.push(`    probe: ${c.probeInfo}`);
       if (c.path) lines.push(`    path: ${c.path}`);
     });
   }
@@ -2238,15 +2245,19 @@ function initWindowControls() {
   if (closeBtn) closeBtn.addEventListener('click', () => sendCommand({ cmd: 'windowClose' }));
 
   if (titlebar) {
-    titlebar.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
-      if (e.target.closest('button, input, select, a, .hud-pill, .window-controls')) return;
-      sendCommand({ cmd: 'windowDrag' });
-    });
-    titlebar.addEventListener('dblclick', (e) => {
-      if (e.target.closest('button, input, select, a, .hud-pill, .window-controls')) return;
-      sendCommand({ cmd: 'windowMaximize' });
-    });
+    const supportsAppRegion = window.CSS && CSS.supports &&
+      (CSS.supports('app-region', 'drag') || CSS.supports('-webkit-app-region', 'drag'));
+    if (!supportsAppRegion) {
+      titlebar.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('button, input, select, a, .hud-pill, .window-controls')) return;
+        sendCommand({ cmd: 'windowDrag' });
+      });
+      titlebar.addEventListener('dblclick', (e) => {
+        if (e.target.closest('button, input, select, a, .hud-pill, .window-controls')) return;
+        sendCommand({ cmd: 'windowMaximize' });
+      });
+    }
   }
 }
 

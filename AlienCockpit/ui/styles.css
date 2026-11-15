@@ -89,9 +89,10 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 0 0 0 18px;
-  background: rgba(11, 16, 29, 0.92);
+  background: #0b101d;
   border-bottom: 1px solid var(--border-subtle);
-  backdrop-filter: blur(12px);
+  -webkit-app-region: drag;
+  app-region: drag;
   cursor: default;
 }
 
@@ -133,6 +134,8 @@ html, body {
 .hud-telemetry {
   display: flex;
   gap: 8px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .hud-pill {
@@ -168,6 +171,17 @@ html, body {
   display: flex;
   align-items: center;
   gap: 12px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.hud-topbar button,
+.hud-topbar input,
+.hud-topbar select,
+.hud-topbar a,
+.window-controls {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .window-controls {
