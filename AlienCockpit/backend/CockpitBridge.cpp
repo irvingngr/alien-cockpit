@@ -16,9 +16,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #pragma comment(lib, "advapi32.lib")
 
@@ -186,16 +188,19 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
     }
 
     bool acpiReady = (mon != nullptr && mon->acpi != nullptr && mon->acpi->isSupported);
+    std::map<WORD, short> senSnap, maxSnap;
+    std::vector<std::pair<byte, std::pair<WORD, byte>>> fanSnap;
     if (acpiReady) {
-        mon->GetSensorData(false);
+        mon->GetSensorData(true);
+        mon->GetTelemetrySnapshot(senSnap, maxSnap, fanSnap);
+    } else if (mon) {
+        mon->GetTelemetrySnapshot(senSnap, maxSnap, fanSnap);
     }
 
     int liveTemp = 0;
-    if (mon && !mon->senValues.empty()) {
-        for (const auto& kv : mon->senValues) {
-            if (kv.second > liveTemp && kv.second < 130) {
-                liveTemp = static_cast<int>(kv.second);
-            }
+    for (const auto& kv : senSnap) {
+        if (kv.second > liveTemp && kv.second < 130) {
+            liveTemp = static_cast<int>(kv.second);
         }
     }
     if (liveTemp == 0 && fxhl && fxhl->eData.Temp > 0) {
@@ -269,7 +274,7 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
         fanData["powerMode"] = uiPowerMode;
         fanData["fanAuto"] = (uiPowerMode == 0 && !mon->fullSpeedManual && hasActiveCurve);
         SimpleJson::Value sensors = SimpleJson::Value::Array();
-        for (const auto& kv : mon->senValues) {
+        for (const auto& kv : senSnap) {
             SimpleJson::Value s = SimpleJson::Value::Object();
             s["id"] = static_cast<int>(kv.first);
             std::string sname;
@@ -283,17 +288,17 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
             if (sname.empty()) sname = "Sensor " + std::to_string(kv.first);
             s["name"] = sname;
             s["temp"] = static_cast<int>(kv.second);
-            s["maxTemp"] = mon->maxTemps.count(kv.first) ? static_cast<int>(mon->maxTemps[kv.first]) : static_cast<int>(kv.second);
+            s["maxTemp"] = maxSnap.count(kv.first) ? static_cast<int>(maxSnap[kv.first]) : static_cast<int>(kv.second);
             sensors.push(s);
         }
         fanData["sensors"] = sensors;
 
         SimpleJson::Value fans = SimpleJson::Value::Array();
-        for (const auto& kv : mon->fanRpm) {
+        for (const auto& fentry : fanSnap) {
             SimpleJson::Value f = SimpleJson::Value::Object();
-            f["id"] = static_cast<int>(kv.first);
-            f["rpm"] = static_cast<int>(kv.second);
-            f["percent"] = static_cast<int>(mon->GetFanPercent(kv.first));
+            f["id"] = static_cast<int>(fentry.first);
+            f["rpm"] = static_cast<int>(fentry.second.first);
+            f["percent"] = static_cast<int>(fentry.second.second);
             fans.push(f);
         }
         fanData["fans"] = fans;
@@ -1806,13 +1811,19 @@ static bool SampleBannerTextPixel(int col, int row, double scrollCol, const std:
     return ((rows[row] >> (4 - glyphCol)) & 1) != 0;
 }
 
-static int SampleLowBatteryIconPixel(int col, int row) {
-    // 12x4 red low-battery icon centered at cols 4..15, rows 1..4
-    if (row < 1 || row > 4 || col < 4 || col > 15) return 0;
-    if (col == 15) return (row == 2 || row == 3) ? 1 : 0; // Battery terminal nub
-    if (row == 1 || row == 4 || col == 4 || col == 14) return 1; // Battery outline
-    if (col == 5 || col == 6) return 2; // Low charge red bar
-    return 0;
+static bool SampleLowBatteryWordPixel(int col, int row) {
+    // Render centered "LOW" in 5x5 bitmap font across cols 1..17, rows 0..4
+    if (row < 0 || row > 4) return false;
+    const int startCol = 1;
+    int relCol = col - startCol;
+    if (relCol < 0 || relCol >= 17) return false;
+    int chIdx = relCol / 6;
+    int glyphCol = relCol % 6;
+    if (glyphCol >= 5) return false;
+    static const char kWord[3] = { 'L', 'O', 'W' };
+    unsigned char rows[5]{};
+    GetGlyph5x5(kWord[chIdx], rows);
+    return ((rows[row] >> (4 - glyphCol)) & 1) != 0;
 }
 
 static void GetChassisV4XY(byte lid, double& nx, double& ny) {
@@ -2046,16 +2057,14 @@ void CockpitBridge::StepAnimatedEffects() {
                     GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
                     int col = static_cast<int>(std::lround(nx * 19.0));
                     int row = static_cast<int>(std::lround(ny * 5.0));
-                    int cell = SampleLowBatteryIconPixel(col, row);
+                    bool lit = SampleLowBatteryWordPixel(col, row);
 
                     AlienFX_SDK::Afx_action frame{};
                     frame.type = AlienFX_SDK::AlienFX_A_Color;
-                    if (blinkOn && cell == 2) {
-                        frame.r = 255; frame.g = 12; frame.b = 18;
-                    } else if (blinkOn && cell == 1) {
-                        frame.r = 190; frame.g = 24; frame.b = 32;
+                    if (blinkOn && lit) {
+                        frame.r = 255; frame.g = 0; frame.b = 12;
                     } else {
-                        frame.r = 10; frame.g = 0; frame.b = 2;
+                        frame.r = 0; frame.g = 0; frame.b = 0;
                     }
 
                     DWORD lgh = MAKELONG(dev.pid, l.lightid);
@@ -2073,11 +2082,24 @@ void CockpitBridge::StepAnimatedEffects() {
             return;
         }
         s_lowBattActive = false;
+        g_crossfade.active = false;
+        g_crossfade.prevColors.clear();
         g_lastSentRgb.clear();
         g_forceFullSoftwareFrame = true;
-        fxhl->deferV5Refresh = true;
-        fxhl->Refresh(true);
+        for (const auto& dev : conf->afx_dev.fxdevs) {
+            if (!dev.present || !dev.dev) continue;
+            if (dev.dev->version != AlienFX_SDK::API_V5 &&
+                dev.dev->version != AlienFX_SDK::API_ACPI) {
+                continue;
+            }
+            std::vector<AlienFX_SDK::Afx_action> offActs{ { AlienFX_SDK::AlienFX_A_Color, 0, 0, 0, 0, 0 } };
+            for (const auto& l : dev.lights) {
+                if (l.flags & ALIENFX_FLAG_POWER) continue;
+                fxhl->SetLight(MAKELONG(dev.pid, l.lightid), &offActs);
+            }
+        }
         fxhl->deferV5Refresh = false;
+        fxhl->ClearAndRefresh(true);
     }
 
     std::vector<WaterDrop> dropsSnapshot;
@@ -2125,10 +2147,13 @@ void CockpitBridge::StepAnimatedEffects() {
     waveCrest.b = static_cast<byte>(std::lround((conf->wavesColor & 0xFF) * wbScale));
 
     static ULONGLONG s_lastTouchpadKeepAliveMs = 0;
+    static ULONGLONG s_lastV4FrameMs = 0;
     bool touchpadWindowActive = (conf->touchpadAlwaysOn != 0) ||
         (conf->touchpadTimeout > 10 && g_lastTouchpadActivityMs != 0 &&
          (nowMs - g_lastTouchpadActivityMs) < static_cast<ULONGLONG>(conf->touchpadTimeout) * 1000ULL);
     bool touchpadKeepAliveTick = touchpadWindowActive && ((nowMs - s_lastTouchpadKeepAliveMs) >= 4000);
+    bool allowV4Frame = (nowMs - s_lastV4FrameMs) >= 85;
+    bool v4FrameSent = false;
 
     bool anyUpdated = false;
     bool anyDevSkipped = false;
@@ -2165,11 +2190,15 @@ void CockpitBridge::StepAnimatedEffects() {
                 continue;
             }
             bool isTouchpadLed = (isV4 && gl.lid >= 35 && gl.lid <= 44);
-            // API_V4 uses its hardware engine via ClearAndRefresh(true); only drive Touchpad keep-alive in software
-            if (isV4 && !(touchpadKeepAliveTick && isTouchpadLed)) {
-                continue;
-            }
-            if (isStaticLs && !isFading && !needWavePass && !(touchpadKeepAliveTick && isTouchpadLed)) {
+            bool forceKeepAlive = (touchpadKeepAliveTick && isTouchpadLed);
+            if (isV4) {
+                if (isStaticLs && !forceKeepAlive) {
+                    continue;
+                }
+                if (!isStaticLs && !allowV4Frame && !finalSettleFrame && !g_forceFullSoftwareFrame && !forceKeepAlive) {
+                    continue;
+                }
+            } else if (isStaticLs && !isFading && !needWavePass) {
                 continue;
             }
             // Never drive hardware Power Button indicator in software loop
@@ -2189,7 +2218,7 @@ void CockpitBridge::StepAnimatedEffects() {
                     SetEvent(hEvt);
                 }
                 bool skipDev = isV4
-                    ? ((!finalSettleFrame && pending >= 1) || (qSize > 80))
+                    ? ((!finalSettleFrame && pending >= 1) || (qSize > 45))
                     : ((!finalSettleFrame && pending >= 2) || (qSize > 250));
                 if (skipDev) anyDevSkipped = true;
                 busyIt = devBusy.emplace(dev->pid, skipDev).first;
@@ -2243,16 +2272,16 @@ void CockpitBridge::StepAnimatedEffects() {
                 HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
             } else if (effType == AlienFX_SDK::AlienFX_A_Rainbow) {
                 if (isV4) {
-                    // Back-and-forth scanner + color flow across Rear Lightbar (#0..#30) and Touchpad (#35..#44)
+                    // Back-and-forth scanner beam across Rear Lightbar (#0..#30) and Touchpad (#35..#44)
                     double scanPos = 0.5 - 0.5 * std::cos(angle * 0.85);
                     double dist = std::fabs(nx - scanPos);
-                    double beam = std::exp(-(dist * dist) / 0.018);
+                    double beam = std::exp(-(dist * dist) / 0.016);
                     double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0, 360.0);
                     AlienFX_SDK::Afx_action rainbowCol{};
                     HsvToRgb(hue, 1.0, 1.0, rainbowCol.r, rainbowCol.g, rainbowCol.b);
-                    AlienFX_SDK::Afx_action baseCol = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1 : rainbowCol;
-                    AlienFX_SDK::Afx_action dimBg{ static_cast<byte>(baseCol.r / 8), static_cast<byte>(baseCol.g / 8), static_cast<byte>(baseCol.b / 8) };
-                    frame = LerpColor(dimBg, rainbowCol, beam);
+                    AlienFX_SDK::Afx_action beamCol = (c1.r > 0 || c1.g > 0 || c1.b > 0) ? c1 : rainbowCol;
+                    AlienFX_SDK::Afx_action dimBg{ static_cast<byte>(beamCol.r / 14), static_cast<byte>(beamCol.g / 14), static_cast<byte>(beamCol.b / 14) };
+                    frame = LerpColor(dimBg, beamCol, beam);
                 } else {
                     double hue = std::fmod(nowSec * cyclesPerSec * 150.0 + nx * 240.0 + ny * 35.0, 360.0);
                     HsvToRgb(hue, 1.0, 1.0, frame.r, frame.g, frame.b);
@@ -2269,28 +2298,33 @@ void CockpitBridge::StepAnimatedEffects() {
                 }
             }
 
-            if (isFading && fadeT < 1.0) {
+            if (!isV4 && isFading && fadeT < 1.0) {
                 auto pIt = g_crossfade.prevColors.find(gl.lgh);
                 AlienFX_SDK::Afx_action prev = (pIt != g_crossfade.prevColors.end()) ? pIt->second : AlienFX_SDK::Afx_action{ 0 };
                 frame = LerpColor(prev, frame, fadeT);
             }
 
+            if (forceKeepAlive && isStaticLs) {
+                frame.b = (frame.b == 0) ? 1 : static_cast<byte>(frame.b ^ 1);
+            }
+
             updatedLights.insert(gl.lgh);
             auto lastIt = g_lastSentRgb.find(gl.lgh);
-            bool forceKeepAlive = (touchpadKeepAliveTick && isTouchpadLed);
             if (forceKeepAlive || finalSettleFrame || g_forceFullSoftwareFrame || lastIt == g_lastSentRgb.end() || !sameFrame(lastIt->second, frame)) {
                 g_lastSentRgb[gl.lgh] = frame;
                 std::vector<AlienFX_SDK::Afx_action> acts{ frame };
                 fxhl->SetLight(gl.lgh, &acts);
                 anyUpdated = true;
+                if (isV4) v4FrameSent = true;
             }
         }
     }
     conf->modifyProfile.unlockRead();
 
     if (touchpadKeepAliveTick) s_lastTouchpadKeepAliveMs = nowMs;
+    if (v4FrameSent) s_lastV4FrameMs = nowMs;
 
-    if (needWavePass) {
+    if (needWavePass || isFading) {
         for (const auto& dev : conf->afx_dev.fxdevs) {
             if (!dev.present || !dev.dev) continue;
             if (dev.dev->version != AlienFX_SDK::API_V5 &&

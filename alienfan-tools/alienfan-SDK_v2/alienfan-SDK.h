@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 #include <vector>
 //#include <wbemidl.h>
@@ -43,6 +44,7 @@ namespace AlienFan_SDK {
 	private:
 		byte sysType = 0;
 		bool comNeedUninit = false;
+		mutable std::mutex wmiMutex;
 		//IWbemHiPerfEnum* m_esifInst, * m_ssdInsts, * m_ohmInsts;
 		IWbemConfigureRefresher* m_pConfig = NULL;
 		void EnumSensors(IWbemServices* srv, const wchar_t* sname, const LPCWSTR valuePath, string name, byte type);

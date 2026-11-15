@@ -126,6 +126,7 @@ namespace AlienFX_SDK {
 				if (!ok && WriteFile(devHandle, buffer, length, &written, NULL)) {
 					ok = TRUE;
 				}
+				if (ok && !abortRequested.load(std::memory_order_acquire)) Sleep(2);
 				return ok != FALSE;
 			}
 			case API_V5:
@@ -508,7 +509,7 @@ namespace AlienFX_SDK {
 				// Send per-ID so an unmapped/sparse ID (e.g. gap ID 3) cannot poison valid LEDs in the same packet.
 				for (byte lid : *lights) {
 					if (abortRequested.load(std::memory_order_acquire)) break;
-					if (v4MaxZones > 0 && lid >= v4MaxZones) continue;
+					if (pid != 0x0551 && v4MaxZones > 0 && lid >= v4MaxZones) continue;
 					val |= PrepareAndSend(COMMV4_setOneColor, { { 3, { r, g, b, 0, 1, lid } } });
 				}
 			} else {
@@ -604,84 +605,91 @@ namespace AlienFX_SDK {
 			vector<StaticGroup> staticGroups;
 			vector<byte> turnOnIds;
 
+			auto addStaticLed = [&](byte lid, byte r, byte g, byte b) {
+				for (auto& sg : staticGroups) {
+					if (sg.r == r && sg.g == g && sg.b == b) {
+						sg.ids.push_back(lid);
+						return;
+					}
+				}
+				staticGroups.push_back({ r, g, b, { lid } });
+			};
+
 			for (auto& blk : *act) {
 				if (blk.act.empty()) continue;
 				if (blk.act.front().type == AlienFX_A_Power) {
 					powerBlocks.push_back(&blk);
 					continue;
 				}
-				if (v4MaxZones > 0 && blk.index >= v4MaxZones) continue;
+				if (pid != 0x0551 && v4MaxZones > 0 && blk.index >= v4MaxZones) continue;
 				turnOnIds.push_back(blk.index);
-				if (blk.act.front().type == AlienFX_A_Color) {
-					byte r = blk.act.front().r, g = blk.act.front().g, b = blk.act.front().b;
-					bool found = false;
-					for (auto& sg : staticGroups) {
-						if (sg.r == r && sg.g == g && sg.b == b) {
-							sg.ids.push_back(blk.index);
-							found = true;
-							break;
-						}
-					}
-					if (!found) {
-						staticGroups.push_back({ r, g, b, { blk.index } });
-					}
+				if (blk.act.front().type == AlienFX_A_Color || pid == 0x0551) {
+					addStaticLed(blk.index, blk.act.front().r, blk.act.front().g, blk.act.front().b);
 				} else {
 					animBlocks.push_back(&blk);
 				}
 			}
 
-			if (bright > 0 && !turnOnIds.empty()) {
-				byte dim = (byte)(0x64 - ClampInt(bright, 0, 100));
-				if (v4MaxZones == 0 || pid == 0x0551) {
-					for (byte lid : turnOnIds) {
-						if (abortRequested.load(std::memory_order_acquire)) break;
-						mods = {
-							{ 3, { dim, 0, 1 } },
-							{ 6, { lid } }
-						};
-						PrepareAndSend(COMMV4_turnOn, &mods);
-					}
-				} else {
-					for (size_t idx = 0; idx < turnOnIds.size(); idx += 28) {
-						if (abortRequested.load(std::memory_order_acquire)) break;
-						size_t count = (turnOnIds.size() - idx < 28) ? (turnOnIds.size() - idx) : 28;
-						vector<byte> chunk(turnOnIds.begin() + idx, turnOnIds.begin() + idx + count);
-						mods = {
-							{ 3, { dim, 0, (byte)count } },
-							{ 6, chunk }
-						};
-						PrepareAndSend(COMMV4_turnOn, &mods);
-					}
-				}
-			}
-
-			if (!inSet) Reset();
-			for (auto& sg : staticGroups) {
-				if (abortRequested.load(std::memory_order_acquire)) break;
-				Afx_action c{ AlienFX_A_Color, 0, 0, sg.r, sg.g, sg.b };
-				val = SetMultiColor(&sg.ids, c);
-			}
-
-			if (!animBlocks.empty()) {
-				if (!staticGroups.empty()) {
-					UpdateColors();
-					Reset();
-				}
-				for (auto* blk : animBlocks) {
-					if (abortRequested.load(std::memory_order_acquire)) break;
-					val = SetV4Action(blk);
-				}
-			}
-
-			UpdateColors();
-			if (save && !abortRequested.load(std::memory_order_acquire)) {
-				SaveLightsState(act);
-			}
-			save = false;
+			// Run Power Button bank updates before live LED writes so power commits never disturb live #0-#44
 			for (auto* pblk : powerBlocks) {
 				if (abortRequested.load(std::memory_order_acquire)) break;
 				val = SetAction(pblk);
 			}
+
+			if (!staticGroups.empty() || !animBlocks.empty()) {
+				if (!inSet) Reset();
+				for (auto& sg : staticGroups) {
+					if (abortRequested.load(std::memory_order_acquire)) break;
+					Afx_action c{ AlienFX_A_Color, 0, 0, sg.r, sg.g, sg.b };
+					val = SetMultiColor(&sg.ids, c);
+				}
+
+				if (!animBlocks.empty()) {
+					if (!staticGroups.empty()) {
+						UpdateColors();
+						Reset();
+					}
+					for (auto* blk : animBlocks) {
+						if (abortRequested.load(std::memory_order_acquire)) break;
+						val = SetV4Action(blk);
+					}
+				}
+
+				UpdateColors();
+
+				if (pid == 0x0551) {
+					if (save && bright > 0 && !turnOnIds.empty()) {
+						byte dim = (byte)(0x64 - ClampInt(bright, 0, 100));
+						for (byte lid : turnOnIds) {
+							if (abortRequested.load(std::memory_order_acquire)) break;
+							mods = {
+								{ 3, { dim, 0, 1 } },
+								{ 6, { lid } }
+							};
+							PrepareAndSend(COMMV4_turnOn, &mods);
+						}
+					}
+				} else {
+					if (save && !abortRequested.load(std::memory_order_acquire)) {
+						SaveLightsState(act);
+					} else if (bright > 0 && !turnOnIds.empty()) {
+						byte dim = (byte)(0x64 - ClampInt(bright, 0, 100));
+						for (size_t idx = 0; idx < turnOnIds.size(); idx += 28) {
+							if (abortRequested.load(std::memory_order_acquire)) break;
+							size_t count = (turnOnIds.size() - idx < 28) ? (turnOnIds.size() - idx) : 28;
+							vector<byte> chunk(turnOnIds.begin() + idx, turnOnIds.begin() + idx + count);
+							mods = {
+								{ 3, { dim, 0, (byte)count } },
+								{ 6, chunk }
+							};
+							PrepareAndSend(COMMV4_turnOn, &mods);
+						}
+					}
+				}
+			} else if (inSet) {
+				UpdateColors();
+			}
+			save = false;
 		} break;
 		default:
 		{
@@ -969,7 +977,7 @@ namespace AlienFX_SDK {
 			if (pid == 0x0551 || v4MaxZones == 0) {
 				for (auto i = mappings->begin(); i < mappings->end(); i++) {
 					if (abortRequested.load(std::memory_order_acquire)) break;
-					if (v4MaxZones > 0 && i->lightid >= v4MaxZones) continue;
+					if (pid != 0x0551 && v4MaxZones > 0 && i->lightid >= v4MaxZones) continue;
 					if (!i->flags || power) {
 						vector<Afx_icommand> mods = {
 							{ 3, { (byte)(0x64 - bright), 0, 1 } },
@@ -1338,7 +1346,8 @@ namespace AlienFX_SDK {
 				continue;
 			}
 			if (sscanf_s(kName, "DevBright#%hd_%hd", &vid, &pid) == 2) {
-				AddDeviceById(MAKELPARAM(pid, vid))->brightness = ((DWORD*)name)[0];
+				DWORD val = ((DWORD*)name)[0];
+				AddDeviceById(MAKELPARAM(pid, vid))->brightness = val ? (byte)val : 255;
 				continue;
 			}
 		}
@@ -1454,19 +1463,11 @@ namespace AlienFX_SDK {
 		if (inSet) UpdateColors();
 		WaitForReady();
 
-		int maxId = (v4MaxZones > 0) ? ((v4MaxZones - 1 < 255) ? (int)(v4MaxZones - 1) : 255) : 63;
+		int maxId = (pid == 0x0551)
+			? 44
+			: ((v4MaxZones > 0) ? ((v4MaxZones - 1 < 255) ? (int)(v4MaxZones - 1) : 255) : 63);
 
-		// Ensure each channel 0..maxId is turned on individually (1 ID/packet so sparse skipped IDs like 3 don't reject the chunk)
-		for (int id = 0; id <= maxId; id++) {
-			if (abortRequested.load(std::memory_order_acquire)) return false;
-			vector<Afx_icommand> tmods = {
-				{ 3, { 0x00, 0x00, 1 } },
-				{ 6, { (byte)id } }
-			};
-			PrepareAndSend(COMMV4_turnOn, &tmods);
-		}
-
-		// Broadcast solid white individually across 0..maxId via COMMV4_setOneColor (0x03 0x27) on live 0xFFFF
+		// Match ProbeLight sequence: Reset -> setOneColor 0..maxId -> UpdateColors -> turnOn AFTER UpdateColors
 		Reset();
 		int pktCount = 0;
 		for (int id = 0; id <= maxId; id++) {
@@ -1476,7 +1477,7 @@ namespace AlienFX_SDK {
 				{ 8, { (byte)id } }
 			};
 			PrepareAndSend(COMMV4_setOneColor, &omods);
-			if (++pktCount >= 20 && id < maxId) {
+			if (pid != 0x0551 && ++pktCount >= 20 && id < maxId) {
 				UpdateColors();
 				Reset();
 				pktCount = 0;
@@ -1484,8 +1485,17 @@ namespace AlienFX_SDK {
 		}
 		UpdateColors();
 
-		// Also update 0x61 permanent lighting bank for lower zones so stored effect does not overwrite live white
-		if (!abortRequested.load(std::memory_order_acquire)) {
+		for (int id = 0; id <= maxId; id++) {
+			if (abortRequested.load(std::memory_order_acquire)) return false;
+			vector<Afx_icommand> tmods = {
+				{ 3, { 0x00, 0x00, 1 } },
+				{ 6, { (byte)id } }
+			};
+			PrepareAndSend(COMMV4_turnOn, &tmods);
+		}
+
+		// Legacy V4 devices (non-0x0551) also use the 0x61 hardware bank
+		if (pid != 0x0551 && !abortRequested.load(std::memory_order_acquire)) {
 			int bankMax = (maxId < 15) ? maxId : 15;
 			PrepareAndSend(COMMV4_control, { { 4, { 4, 0, 0x61 } } });
 			PrepareAndSend(COMMV4_control, { { 4, { 1, 0, 0x61 } } });

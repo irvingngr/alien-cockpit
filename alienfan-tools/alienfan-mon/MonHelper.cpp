@@ -26,6 +26,7 @@ MonHelper::MonHelper() {
 		sensorSize = (WORD)acpi->sensors.size();
 		oldPower = GetPowerMode();
 		Start();
+		GetSensorData(true);
 	}
 }
 
@@ -166,17 +167,18 @@ byte MonHelper::GetFanPercent(byte fanID)
 		bst->maxRPM = (WORD)maxR;
 	}
 	if (!bst->maxRPM) { // no MaxRPM yet
-		*bst = { 100, (WORD)max(maxR, 1000) };
+		WORD fallbackMax = (maxR > 1000) ? (WORD)maxR : max((WORD)5200, rpm);
+		*bst = { 100, fallbackMax };
 	}
 	if (bst->maxRPM < rpm) { // current RPM higher, then BIOS high
 		bst->maxRPM = rpm;
 	}
 	if (rpm == 0) return 0;
 	int acpiPct = acpi ? acpi->GetFanPercent(fanID) : -1;
-	if (acpiPct >= 0 && acpiPct <= 100) {
+	if (acpiPct > 0 && acpiPct <= 100) {
 		return (byte)acpiPct;
 	}
-	return (byte)min(100, (int)((rpm * 100) / max((WORD)1000, bst->maxRPM)));
+	return (byte)min(100, max(1, (int)((rpm * 100) / max((WORD)1000, bst->maxRPM))));
 }
 
 int MonHelper::GetPowerMode() {
@@ -221,6 +223,7 @@ int MonHelper::GetFanRPM(int fanID) {
 
 WORD MonHelper::GetSensorData(bool forced) {
 	if (!acpi || !acpi->isSupported) return 0;
+	std::lock_guard<std::mutex> lock(dataMutex);
 	// update values:
 	if (forced || !monThread) {
 		// temps..
@@ -243,6 +246,17 @@ WORD MonHelper::GetSensorData(bool forced) {
 		}
 	}
 	return GetPowerMode();
+}
+
+void MonHelper::GetTelemetrySnapshot(map<WORD, short>& outSen, map<WORD, short>& outMax, vector<pair<byte, pair<WORD, byte>>>& outFans) {
+	std::lock_guard<std::mutex> lock(dataMutex);
+	outSen = senValues;
+	outMax = maxTemps;
+	outFans.clear();
+	outFans.reserve(fanRpm.size());
+	for (const auto& kv : fanRpm) {
+		outFans.push_back({ kv.first, { kv.second, GetFanPercent(kv.first) } });
+	}
 }
 
 void CMonProc(LPVOID param) {
@@ -270,21 +284,24 @@ void CMonProc(LPVOID param) {
 				// Check boost
 				byte fanID = cIter.first;
 				int curBoost = 0;
-				for (auto fIter = cIter.second.begin(); fIter != cIter.second.end(); fIter++) {
-					if (fIter->second.active) {
-						sen_block* cur = &fIter->second;
-						WORD senID = fIter->first;
-						if (cur->points.size() < 2) continue;
-						auto k = cur->points.begin() + 1;
-						for (; k != cur->points.end() && src->senValues[senID] > k->temp; k++);
-						auto ko = k - 1;
-						cBoost = k == cur->points.end() || k->temp == ko->temp ? ko->boost :
-							ko->boost + ((k->boost - ko->boost) * (src->senValues[senID] - ko->temp))
-							/ (k->temp - ko->temp);
-						src->senBoosts[fanID][senID] = cBoost;
-						if (cBoost > curBoost) {
-							curBoost = cBoost;
-							src->lastBoost[fanID] = senID;
+				{
+					std::lock_guard<std::mutex> lock(src->dataMutex);
+					for (auto fIter = cIter.second.begin(); fIter != cIter.second.end(); fIter++) {
+						if (fIter->second.active) {
+							sen_block* cur = &fIter->second;
+							WORD senID = fIter->first;
+							if (cur->points.size() < 2) continue;
+							auto k = cur->points.begin() + 1;
+							for (; k != cur->points.end() && src->senValues[senID] > k->temp; k++);
+							auto ko = k - 1;
+							cBoost = k == cur->points.end() || k->temp == ko->temp ? ko->boost :
+								ko->boost + ((k->boost - ko->boost) * (src->senValues[senID] - ko->temp))
+								/ (k->temp - ko->temp);
+							src->senBoosts[fanID][senID] = cBoost;
+							if (cBoost > curBoost) {
+								curBoost = cBoost;
+								src->lastBoost[fanID] = senID;
+							}
 						}
 					}
 				}

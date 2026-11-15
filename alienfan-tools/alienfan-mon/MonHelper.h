@@ -1,4 +1,6 @@
 #pragma once
+#include <mutex>
+#include <utility>
 #include "alienfan-SDK.h"
 #include "ConfigFan.h"
 #include "ThreadHelper.h"
@@ -8,6 +10,7 @@ private:
 	ThreadHelper* monThread = NULL;
 	short oldPower = 0;
 	bool stopped = true;
+	mutable std::mutex dataMutex;
 	void Run();
 	void Finish();
 	void ToggleMode();
@@ -35,6 +38,7 @@ public:
 	void SetPowerMode(byte newMode);
 	int GetFanRPM(int fanID);
 	WORD GetSensorData(bool forced = false);
+	void GetTelemetrySnapshot(map<WORD, short>& outSen, map<WORD, short>& outMax, vector<pair<byte, pair<WORD, byte>>>& outFans);
 	void ResetBoost();
 	void SetOC();
 	void SetCpuModes();

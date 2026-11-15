@@ -215,6 +215,13 @@ function isPerKeyKeyboard(dev) {
 function getTargetDeviceForView(view = state.activeView) {
   const cur = state.devices.find((d) => d.pid === state.selectedDevicePid);
   const matcher = view === 'keyboard' ? isKeyboardDevice : view === 'mouse' ? isMouseDevice : isChassisDevice;
+  if (view === 'chassis') {
+    const aw0551 = state.devices.find((d) => d.present && d.pid === 0x0551) ||
+      state.devices.find((d) => d.pid === 0x0551) ||
+      state.devices.find((d) => d.present && d.version === 4) ||
+      state.devices.find((d) => d.version === 4);
+    if (aw0551 && (!cur || !isChassisDevice(cur) || cur.pid !== aw0551.pid)) return aw0551;
+  }
   if (cur && matcher(cur)) return cur;
 
   const presentMatch = state.devices.find((d) => d.present && matcher(d));

@@ -59,6 +59,7 @@ namespace AlienFan_SDK {
 	}
 
 	int Control::CallWMIMethod(byte com, byte arg1, byte arg2) {
+		std::lock_guard<std::mutex> lock(wmiMutex);
 		VARIANT result{ VT_I4 };
 		result.intVal = -1;
 		if (sysType >= 0 && m_WbemServices && m_InParamaters && m_instancePath.vt == VT_BSTR && m_instancePath.bstrVal) {

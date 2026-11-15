@@ -69,6 +69,7 @@ static HHOOK g_kbdHook = nullptr;
 
 static DWORD WINAPI TelemetryWorkerProc(LPVOID) {
     HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    CockpitBridge::RefreshTelemetryCache(false);
     CockpitBridge::RefreshTelemetryCache(true);
     ULONGLONG lastBattScan = GetTickCount64();
     HANDLE waits[3] = { g_telemetryStopEvent, g_telemetryBatteryWakeEvent, g_telemetryWakeEvent };
@@ -434,9 +435,7 @@ static void EnsureDefaultDeviceMappings() {
                     nm.rfind("Rear Vents ", 0) == 0 ||
                     nm == "Rear" || nm == "Logo" || nm == "Left" || nm == "Right" || nm == "Power";
             };
-            int targetCount = (dev.dev->v4MaxZones > 0 && dev.dev->v4MaxZones < 45)
-                ? static_cast<int>(dev.dev->v4MaxZones)
-                : 45;
+            int targetCount = 45;
             for (int i = 0; i < targetCount; ++i) {
                 byte lid = static_cast<byte>(i);
                 WORD cFlags = 0;
@@ -476,8 +475,8 @@ static void EnsureDefaultDeviceMappings() {
             }
         }
 
-        // Trim out-of-range auto-generated V4 chassis zones only when hardware explicitly reported v4MaxZones
-        if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.dev->v4MaxZones > 0) {
+        // Trim out-of-range auto-generated V4 chassis zones only when hardware explicitly reported v4MaxZones (non-0x0551)
+        if (dev.dev && dev.dev->version == AlienFX_SDK::API_V4 && dev.pid != 0x0551 && dev.dev->v4MaxZones > 0) {
             byte trimLimit = dev.dev->v4MaxZones;
             for (auto lit = dev.lights.begin(); lit != dev.lights.end(); ) {
                 if (lit->lightid >= trimLimit && lit->name.rfind("LED Zone ", 0) == 0) {

@@ -331,6 +331,13 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 					if (action->type != AlienFX_SDK::AlienFX_A_Morph) {
 						action->type = (newBlock.actsize >= 2) ? AlienFX_SDK::AlienFX_A_Morph : AlienFX_SDK::AlienFX_A_Color;
 					}
+				} else if (dev->dev->version == AlienFX_SDK::API_V4 && dev->pid == 0x0551) {
+					// AA18250 AW-ELC (0x0551) animates smoothly via StepAnimatedEffects live frames; keep hardware block static
+					if (action->r == 0 && action->g == 0 && action->b == 0 &&
+						(action->type == AlienFX_SDK::AlienFX_A_Rainbow || action->type == AlienFX_SDK::AlienFX_A_Spectrum)) {
+						action->r = 0; action->g = 240; action->b = 255;
+					}
+					action->type = AlienFX_SDK::AlienFX_A_Color;
 				} else {
 					// Convert custom software effects safely to static color on hardware controllers
 					if (action->type > AlienFX_SDK::AlienFX_A_Power) {
