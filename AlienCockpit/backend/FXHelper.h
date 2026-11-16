@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <queue>
 #include <map>
 #include "ConfigHandler.h"
@@ -21,6 +22,7 @@ struct DeviceUpdateQuery {
 	queue<LightQueryElement> lightQuery;
 	map<byte, LightQueryElement> lstate;
 	int pendingUpdates = 0;
+	bool busy = false;
 };
 
 struct LightQueryData {
@@ -57,6 +59,7 @@ public:
 		finalPBState = true, 
 		updateAllowed = true,
 		deferV5Refresh = false;
+	std::atomic<bool> softwareOverrideActive{ false };
 	int finalBrightness = -1;
 
 	FXHelper();

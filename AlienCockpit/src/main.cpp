@@ -176,17 +176,7 @@ static void PopulateTrayNotifyData(HWND hwnd) {
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
     UINT iconRes = (conf && !conf->lightsOn) ? IDI_ALIENFX_OFF : ((conf && conf->stateDimmed) ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON);
-    HICON hIcon = static_cast<HICON>(LoadImageW(
-        hInst,
-        MAKEINTRESOURCEW(iconRes),
-        IMAGE_ICON,
-        GetSystemMetrics(SM_CXSMICON),
-        GetSystemMetrics(SM_CYSMICON),
-        LR_SHARED));
-    if (!hIcon) {
-        hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
-    }
-    g_nid.hIcon = hIcon;
+    g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
 }
 
 static bool EnsureTrayIconAdded(HWND hwnd) {
@@ -1118,6 +1108,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     conf->afx_dev.AlienFXEnumDevices(mon ? mon->acpi : nullptr);
     EnsureDefaultDeviceMappings();
     EnsureDefaultAuroraProfile();
+    const bool willRunStartupIntro = (conf->startupIntro && conf->lightsOn);
+    if (willRunStartupIntro) {
+        fxhl->deferV5Refresh = true;
+        fxhl->softwareOverrideActive.store(true, std::memory_order_release);
+    }
     fxhl->Start();
     eve->StartProfiles();
 
@@ -1178,8 +1173,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     InitTrayIcon(hwnd);
     SetTimer(hwnd, TIMER_TELEMETRY, 1500, nullptr);
     SetTimer(hwnd, TIMER_EFFECTS, 33, nullptr);
-    if (conf->startupIntro && conf->lightsOn) {
+    fxhl->deferV5Refresh = false;
+    if (conf->startupIntro && conf->lightsOn && conf->stateOn) {
         CockpitBridge::TriggerStartupIntro();
+    } else if (willRunStartupIntro) {
+        fxhl->softwareOverrideActive.store(false, std::memory_order_release);
+        if (conf->lightsOn && conf->stateOn) {
+            fxhl->ClearAndRefresh(true);
+        }
     }
     g_kbdHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInst, 0);
 

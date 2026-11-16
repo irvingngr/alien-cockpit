@@ -43,6 +43,7 @@ static std::string g_activePresetName;
 
 static bool g_probeActive = false;
 static bool g_introActive = false;
+static bool g_introWaitReady = false;
 static int g_activeIntroStyle = 0;
 static ULONGLONG g_introStartMs = 0;
 static bool g_lowBattPreviewActive = false;
@@ -559,6 +560,11 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
     if (cmd == "toggleLights" && conf && fxhl) {
         conf->lightsOn = msg.get("on").asBool(true) ? 1 : 0;
+        if (!conf->lightsOn) {
+            g_introActive = false;
+            g_introWaitReady = false;
+            fxhl->softwareOverrideActive.store(false, std::memory_order_release);
+        }
         fxhl->SetState(true);
         if (conf->lightsOn) {
             g_forceFullSoftwareFrame = true;
@@ -940,6 +946,8 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         AlienFX_SDK::Afx_device* dev = conf->afx_dev.GetDeviceById(pid);
         g_probeActive = true;
         g_introActive = false;
+        g_introWaitReady = false;
+        fxhl->softwareOverrideActive.store(false, std::memory_order_release);
         if (dev && dev->present && dev->dev) {
             fxhl->QueueProbeLight(dev->pid, lid);
         }
@@ -948,6 +956,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
 
     if (cmd == "endProbe" && conf && fxhl) {
         g_probeActive = false;
+        fxhl->softwareOverrideActive.store(false, std::memory_order_release);
         g_forceFullSoftwareFrame = true;
         BeginCrossfade(500);
         fxhl->SetState(true);
@@ -974,6 +983,8 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     if (cmd == "previewLowBatteryAlert" && conf && fxhl) {
         g_probeActive = false;
         g_introActive = false;
+        g_introWaitReady = false;
+        fxhl->softwareOverrideActive.store(true, std::memory_order_release);
         g_lowBattPreviewActive = true;
         g_lowBattPreviewStartMs = GetTickCount64();
         g_lastSentRgb.clear();
@@ -1038,6 +1049,8 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
     if (cmd == "emergencyWhite" && conf && fxhl) {
         g_probeActive = false;
         g_introActive = false;
+        g_introWaitReady = false;
+        fxhl->softwareOverrideActive.store(false, std::memory_order_release);
         bool ok = fxhl->EmergencyWhiteAll();
         int cnt = 0;
         for (const auto& d : conf->afx_dev.fxdevs) {
@@ -1706,12 +1719,17 @@ static void VkToKeyXY(DWORD vk, double& nx, double& ny) {
 }
 
 void CockpitBridge::TriggerStartupIntro(int styleOverride) {
-    if (!conf || !conf->lightsOn || !conf->stateOn) return;
+    if (!conf || !conf->lightsOn || !conf->stateOn) {
+        if (fxhl) fxhl->softwareOverrideActive.store(false, std::memory_order_release);
+        return;
+    }
     g_probeActive = false;
+    if (fxhl) fxhl->softwareOverrideActive.store(true, std::memory_order_release);
     g_lastSentRgb.clear();
     g_forceFullSoftwareFrame = true;
     g_activeIntroStyle = (styleOverride >= 0) ? std::clamp(styleOverride, 0, 2) : std::clamp(static_cast<int>(conf->introStyle), 0, 2);
     g_introActive = true;
+    g_introWaitReady = true;
     g_introStartMs = GetTickCount64();
 }
 
@@ -1825,19 +1843,19 @@ static bool SampleBannerTextPixel(int col, int row, double scrollCol, const std:
     return ((rows[row] >> (4 - glyphCol)) & 1) != 0;
 }
 
-static bool SampleLowBatteryWordPixel(int col, int row) {
-    // Render centered "LOW" in 5x5 bitmap font across cols 1..17, rows 0..4
-    if (row < 0 || row > 4) return false;
-    const int startCol = 1;
-    int relCol = col - startCol;
-    if (relCol < 0 || relCol >= 17) return false;
-    int chIdx = relCol / 6;
-    int glyphCol = relCol % 6;
-    if (glyphCol >= 5) return false;
-    static const char kWord[3] = { 'L', 'O', 'W' };
-    unsigned char rows[5]{};
-    GetGlyph5x5(kWord[chIdx], rows);
-    return ((rows[row] >> (4 - glyphCol)) & 1) != 0;
+static bool IsLowBatteryWordKey(byte lid) {
+    // Crisp 4-row alphanumeric layout for "LOW" on staggered ANSI Darfon keyboards (Rows 1-4):
+    //   L: 1 (21), Q (42), A (62), Z (83), X (84)
+    //   O: 4 (24), 5 (25), 6 (26), R (45), Y (47), F (65), H (67), V (86), B (87), N (88)
+    //   W: 8 (28), = (32), I (49), P (51), ] (53), K (69), ' (72), , (90), / (92)
+    switch (lid) {
+    case 21: case 42: case 62: case 83: case 84:
+    case 24: case 25: case 26: case 45: case 47: case 65: case 67: case 86: case 87: case 88:
+    case 28: case 32: case 49: case 51: case 53: case 69: case 72: case 90: case 92:
+        return true;
+    default:
+        return false;
+    }
 }
 
 static void GetChassisV4XY(byte lid, double& nx, double& ny) {
@@ -1877,7 +1895,12 @@ static int SampleAlienheadPixel(int col, int row) {
 }
 
 void CockpitBridge::StepAnimatedEffects() {
-    if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) return;
+    if (!conf || !fxhl || !conf->lightsOn || !conf->stateOn || !conf->activeProfile) {
+        if (fxhl) fxhl->softwareOverrideActive.store(false, std::memory_order_release);
+        g_introActive = false;
+        g_introWaitReady = false;
+        return;
+    }
     if (g_probeActive) return;
 
     auto sameFrame = [](const AlienFX_SDK::Afx_action& a, const AlienFX_SDK::Afx_action& b) -> bool {
@@ -1888,6 +1911,34 @@ void CockpitBridge::StepAnimatedEffects() {
     double nowSec = static_cast<double>(nowMs) / 1000.0;
 
     if (g_introActive) {
+        if (g_introWaitReady) {
+            bool deviceBusy = false;
+            for (const auto& dev : conf->afx_dev.fxdevs) {
+                if (!dev.present || !dev.dev) continue;
+                if (dev.dev->version != AlienFX_SDK::API_V5 &&
+                    dev.dev->version != AlienFX_SDK::API_ACPI) {
+                    continue;
+                }
+                fxhl->modifyQuery.lockRead();
+                auto qIt = fxhl->devLightQuery.find(dev.pid);
+                bool cmdBusy = (qIt != fxhl->devLightQuery.end()) ? qIt->second.busy : false;
+                size_t qSize = (qIt != fxhl->devLightQuery.end()) ? qIt->second.lightQuery.size() : 0;
+                int pending = (qIt != fxhl->devLightQuery.end()) ? qIt->second.pendingUpdates : 0;
+                HANDLE hEvt = (qIt != fxhl->devLightQuery.end()) ? qIt->second.haveNewElement : nullptr;
+                fxhl->modifyQuery.unlockRead();
+                if (cmdBusy || qSize > 0 || pending > 0) {
+                    if (hEvt) SetEvent(hEvt);
+                    deviceBusy = true;
+                }
+            }
+            if (deviceBusy) {
+                g_introStartMs = nowMs;
+                return;
+            }
+            g_introWaitReady = false;
+            g_introStartMs = nowMs;
+        }
+
         ULONGLONG elapsed = (nowMs >= g_introStartMs) ? (nowMs - g_introStartMs) : 0;
         static const double kIntroSpeedMult[5] = { 1.80, 1.35, 1.00, 0.68, 0.45 };
         int spdIdx = std::clamp(static_cast<int>(conf->introSpeed), 0, 4);
@@ -1996,6 +2047,8 @@ void CockpitBridge::StepAnimatedEffects() {
             return;
         }
         g_introActive = false;
+        g_introWaitReady = false;
+        fxhl->softwareOverrideActive.store(false, std::memory_order_release);
         g_forceFullSoftwareFrame = true;
         BeginCrossfade(650);
     }
@@ -2013,6 +2066,7 @@ void CockpitBridge::StepAnimatedEffects() {
 
     // Snapshot active water drops outside lock so global Waves Mode stays zero-contention
     static bool s_lowBattActive = false;
+    static bool s_lowBattIsPreview = false;
     static ULONGLONG s_lowBattStartMs = 0;
     static ULONGLONG s_lastLowBattTriggerMs = 0;
     static ULONGLONG s_lastPowerPollMs = 0;
@@ -2020,7 +2074,9 @@ void CockpitBridge::StepAnimatedEffects() {
 
     if (g_lowBattPreviewActive) {
         g_lowBattPreviewActive = false;
+        s_lowBattIsPreview = true;
         s_lowBattActive = true;
+        fxhl->softwareOverrideActive.store(true, std::memory_order_release);
         s_lowBattStartMs = g_lowBattPreviewStartMs ? g_lowBattPreviewStartMs : nowMs;
         g_lastSentRgb.clear();
         g_forceFullSoftwareFrame = true;
@@ -2034,13 +2090,18 @@ void CockpitBridge::StepAnimatedEffects() {
         }
         if (s_lowBattCondition && !s_lowBattActive &&
             (s_lastLowBattTriggerMs == 0 || (nowMs - s_lastLowBattTriggerMs) >= 300000)) {
+            s_lowBattIsPreview = false;
             s_lowBattActive = true;
+            fxhl->softwareOverrideActive.store(true, std::memory_order_release);
             s_lowBattStartMs = nowMs;
             s_lastLowBattTriggerMs = nowMs;
             g_lastSentRgb.clear();
             g_forceFullSoftwareFrame = true;
         }
-    } else {
+    } else if (!s_lowBattIsPreview) {
+        if (s_lowBattActive) {
+            fxhl->softwareOverrideActive.store(false, std::memory_order_release);
+        }
         s_lowBattActive = false;
         s_lowBattCondition = false;
     }
@@ -2048,7 +2109,7 @@ void CockpitBridge::StepAnimatedEffects() {
     if (s_lowBattActive) {
         ULONGLONG elapsed = (nowMs >= s_lowBattStartMs) ? (nowMs - s_lowBattStartMs) : 0;
         if (elapsed < 2000) {
-            bool blinkOn = ((elapsed / 250) % 2) == 0;
+            bool blinkOn = ((elapsed / 333) % 2) == 0;
             bool battUpdated = false;
             for (const auto& dev : conf->afx_dev.fxdevs) {
                 if (!dev.present || !dev.dev) continue;
@@ -2065,13 +2126,10 @@ void CockpitBridge::StepAnimatedEffects() {
                 if ((qSize > 0 || pending > 0) && hEvt) SetEvent(hEvt);
                 if (pending >= 2 || qSize > 250) continue;
 
+                bool isPerKeyDarfon = (dev.vid == 0x0D62) || (dev.lights.size() >= 80);
                 for (const auto& l : dev.lights) {
                     if (l.flags & ALIENFX_FLAG_POWER) continue;
-                    double nx = 0.0, ny = 0.0;
-                    GetDarfonKeyXY(static_cast<byte>(l.lightid), nx, ny);
-                    int col = static_cast<int>(std::lround(nx * 19.0));
-                    int row = static_cast<int>(std::lround(ny * 5.0));
-                    bool lit = SampleLowBatteryWordPixel(col, row);
+                    bool lit = isPerKeyDarfon ? IsLowBatteryWordKey(static_cast<byte>(l.lightid)) : true;
 
                     AlienFX_SDK::Afx_action frame{};
                     frame.type = AlienFX_SDK::AlienFX_A_Color;
@@ -2096,6 +2154,8 @@ void CockpitBridge::StepAnimatedEffects() {
             return;
         }
         s_lowBattActive = false;
+        s_lowBattIsPreview = false;
+        fxhl->softwareOverrideActive.store(false, std::memory_order_release);
         g_crossfade.active = false;
         g_crossfade.prevColors.clear();
         g_lastSentRgb.clear();

@@ -16,6 +16,7 @@ extern HANDLE haveLightFX;
 extern MonHelper* mon;
 
 DWORD WINAPI CLightsProc(LPVOID param);
+static thread_local bool tl_inProfileRefresh = false;
 
 FXHelper::FXHelper() {
 	stopQuery = CreateEvent(NULL, true, false, NULL);
@@ -292,7 +293,15 @@ void FXHelper::QueryCommand(WORD pid, LightQueryElement &lqe) {
 
 // Clear light states before forced update
 void FXHelper::ClearAndRefresh(bool force) {
-	QueryAllDevs(LightQueryElement({ 0,5 }));
+	if (softwareOverrideActive.load(std::memory_order_acquire)) {
+		for (auto& devQ : conf->afx_dev.fxdevs) {
+			if (devQ.present && (!devQ.dev || (devQ.dev->version != AlienFX_SDK::API_V5 && devQ.dev->version != AlienFX_SDK::API_ACPI))) {
+				QueryCommand(devQ.pid, LightQueryElement({ 0, 5 }));
+			}
+		}
+	} else {
+		QueryAllDevs(LightQueryElement({ 0,5 }));
+	}
 	Refresh(force);
 }
 
@@ -313,7 +322,8 @@ void FXHelper::SetLight(DWORD lgh, vector<AlienFX_SDK::Afx_action>* actions)
 	auto dev = conf->afx_dev.GetDeviceById(LOWORD(lgh));
 	if (dev && dev->present && actions->size()) {
 		bool isPowerLight = (conf->afx_dev.GetFlags(dev, HIWORD(lgh)) & ALIENFX_FLAG_POWER) != 0;
-		if (deferV5Refresh && !isPowerLight && dev->dev &&
+		bool suppressV5 = deferV5Refresh || (tl_inProfileRefresh && softwareOverrideActive.load(std::memory_order_acquire));
+		if (suppressV5 && !isPowerLight && dev->dev &&
 			(dev->dev->version == AlienFX_SDK::API_V5 || dev->dev->version == AlienFX_SDK::API_ACPI ||
 			 (dev->dev->version == AlienFX_SDK::API_V4 && dev->pid == 0x0551 && actions->front().type != AlienFX_SDK::AlienFX_A_Color))) {
 			return;
@@ -458,6 +468,11 @@ void FXHelper::Refresh(bool forced)
 	}
 	DebugPrint("Refresh initiated.\n");
 #endif
+	struct ProfileRefreshGuard {
+		bool prev;
+		ProfileRefreshGuard() : prev(tl_inProfileRefresh) { tl_inProfileRefresh = true; }
+		~ProfileRefreshGuard() { tl_inProfileRefresh = prev; }
+	} refreshGuard;
 	conf->modifyProfile.lockRead();
 	for (groupset& it : conf->activeProfile->lightsets) {
 		RefreshZone(&it, false);
@@ -469,7 +484,15 @@ void FXHelper::Refresh(bool forced)
 		RefreshHaptics(true);
 		RefreshGrid(true);
 	}
-	QueryUpdate(forced);
+	if (softwareOverrideActive.load(std::memory_order_acquire)) {
+		for (auto& devQ : conf->afx_dev.fxdevs) {
+			if (devQ.present && (!devQ.dev || (devQ.dev->version != AlienFX_SDK::API_V5 && devQ.dev->version != AlienFX_SDK::API_ACPI))) {
+				QueryCommand(devQ.pid, LightQueryElement({ (byte)forced, 1 }));
+			}
+		}
+	} else {
+		QueryUpdate(forced);
+	}
 }
 
 void FXHelper::RefreshZone(groupset* map, bool update) {
@@ -856,10 +879,12 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 		while (WaitForSingleObject(src->stopQuery, 0) != WAIT_OBJECT_0) {
 			src->modifyQuery.lockWrite();
 			if (lightQuery->lightQuery.empty()) {
+				lightQuery->busy = false;
 				ResetEvent(lightQuery->haveNewElement);
 				src->modifyQuery.unlockWrite();
 				break;
 			}
+			lightQuery->busy = true;
 			current = lightQuery->lightQuery.front();
 			lightQuery->lightQuery.pop();
 			if (current.command == 7) {
@@ -907,7 +932,10 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 					: src->finalBrightness);
 				if (dev && dev->present && dev->dev) {
 					if (conf->afx_dev.SetDeviceBrightness(&(*dev), fbright, pbstate)) {
-						src->ClearAndRefresh();
+						if (!(src->softwareOverrideActive.load(std::memory_order_acquire) &&
+							dev->dev && (dev->dev->version == AlienFX_SDK::API_V5 || dev->dev->version == AlienFX_SDK::API_ACPI))) {
+							src->ClearAndRefresh();
+						}
 					}
 				}
 				//DebugPrint("Set brightness " + to_string(src->finalBrightness) + " for device " + to_string(dev->pid) + "\n");
@@ -965,6 +993,9 @@ DWORD WINAPI CLightsProc(LPVOID param) {
 				dev_query.push_back(ablock);
 			}
 			}
+			src->modifyQuery.lockWrite();
+			lightQuery->busy = !lightQuery->lightQuery.empty();
+			src->modifyQuery.unlockWrite();
 		}
 	}
 	delete ld;
