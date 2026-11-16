@@ -75,9 +75,6 @@ EventHandler::EventHandler()
 
 	ChangePowerState();
 	SwitchActiveProfile(conf->activeProfile, true);
-	if (conf->startMinimized) {
-		StartProfiles();
-	}
 	acStop = CreateEvent(NULL, false, false, NULL);
 }
 

@@ -237,7 +237,7 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
     root["system"] = sys;
 
     std::vector<BatteryDeviceInfo> battsList;
-    if (scanBatteries || !g_hasBatteryCache) {
+    if (scanBatteries) {
         battsList = BatteryMonitor::GetAllBatteries();
         std::lock_guard<std::mutex> lock(g_telemetryMutex);
         g_cachedBatteries = battsList;
@@ -340,7 +340,7 @@ std::string CockpitBridge::BuildTelemetryJson() {
             return g_cachedTelemetryJson;
         }
     }
-    RefreshTelemetryCache(true);
+    RefreshTelemetryCache(false);
     std::lock_guard<std::mutex> lock(g_telemetryMutex);
     return g_cachedTelemetryJson;
 }

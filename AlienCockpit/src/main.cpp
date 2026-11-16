@@ -15,6 +15,7 @@
 #include "../backend/EventHandler.h"
 #include "../backend/CockpitBridge.h"
 #include "../backend/BatteryMonitor.h"
+#include "../backend/StartupManager.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
 #include <algorithm>
@@ -58,14 +59,26 @@ static bool g_trayAdded = false;
 static HANDLE g_hMutex = nullptr;
 static const UINT_PTR TIMER_TELEMETRY = 1;
 static const UINT_PTR TIMER_EFFECTS = 2;
+static const UINT_PTR TIMER_TRAY_RETRY = 3;
 static const UINT WM_APP_WINDOW_DRAG = WM_APP + 10;
+static const UINT WM_APP_SYNC_TRAY = WM_APP + 11;
+static UINT g_wmTaskbarCreated = 0;
+static UINT g_wmShowMainWindow = 0;
 static std::atomic<bool> g_exiting{ false };
+static bool g_webviewInitializing = false;
 static bool g_isMovingOrSizing = false;
 static HANDLE g_telemetryStopEvent = nullptr;
 static HANDLE g_telemetryWakeEvent = nullptr;
 static HANDLE g_telemetryBatteryWakeEvent = nullptr;
 static HANDLE g_telemetryThread = nullptr;
 static HHOOK g_kbdHook = nullptr;
+
+static std::wstring GetExeDirectory() {
+    wchar_t path[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    PathRemoveFileSpecW(path);
+    return std::wstring(path);
+}
 
 static DWORD WINAPI TelemetryWorkerProc(LPVOID) {
     HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -103,6 +116,7 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
 static bool RelaunchAsAdmin(HWND hwnd, bool minimized) {
     wchar_t exePath[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring exeDir = GetExeDirectory();
     std::wstring params = L"--relaunch";
     if (minimized) params += L" --minimized";
 
@@ -116,6 +130,7 @@ static bool RelaunchAsAdmin(HWND hwnd, bool minimized) {
     sei.lpVerb = L"runas";
     sei.lpFile = exePath;
     sei.lpParameters = params.c_str();
+    sei.lpDirectory = exeDir.empty() ? nullptr : exeDir.c_str();
     sei.nShow = minimized ? SW_SHOWMINNOACTIVE : SW_SHOWNORMAL;
 
     if (ShellExecuteExW(&sei)) {
@@ -144,13 +159,6 @@ static std::string WideToUtf8(const std::wstring& ws) {
     return out;
 }
 
-static std::wstring GetExeDirectory() {
-    wchar_t path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    return std::wstring(path);
-}
-
 static std::wstring GetWebViewUserDataFolder() {
     wchar_t appData[MAX_PATH]{};
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appData)) && appData[0] != L'\0') {
@@ -161,10 +169,49 @@ static std::wstring GetWebViewUserDataFolder() {
     return GetExeDirectory() + L"\\WebView2Data";
 }
 
+static void PopulateTrayNotifyData(HWND hwnd) {
+    g_nid.cbSize = sizeof(NOTIFYICONDATAW);
+    g_nid.hWnd = hwnd;
+    g_nid.uID = 1;
+    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_nid.uCallbackMessage = WM_TRAYICON;
+    UINT iconRes = (conf && !conf->lightsOn) ? IDI_ALIENFX_OFF : ((conf && conf->stateDimmed) ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON);
+    HICON hIcon = static_cast<HICON>(LoadImageW(
+        hInst,
+        MAKEINTRESOURCEW(iconRes),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        LR_SHARED));
+    if (!hIcon) {
+        hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
+    }
+    g_nid.hIcon = hIcon;
+}
+
+static bool EnsureTrayIconAdded(HWND hwnd) {
+    if (!hwnd || g_exiting.load(std::memory_order_acquire)) return false;
+    PopulateTrayNotifyData(hwnd);
+    if (!g_nid.szTip[0]) {
+        wcscpy_s(g_nid.szTip, L"AlienCockpit — AWCC Alternative");
+    }
+    if (Shell_NotifyIconW(NIM_ADD, &g_nid)) {
+        g_trayAdded = true;
+        KillTimer(hwnd, TIMER_TRAY_RETRY);
+        return true;
+    }
+    g_trayAdded = false;
+    return false;
+}
+
 static void UpdateTrayIconAndTooltip(bool forceScan = false) {
-    if (!g_trayAdded || !conf || g_exiting.load(std::memory_order_acquire)) return;
-    UINT iconRes = conf->lightsOn ? (conf->stateDimmed ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON) : IDI_ALIENFX_OFF;
-    g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
+    if (!conf || g_exiting.load(std::memory_order_acquire) || !mDlg) return;
+    if (!g_trayAdded) {
+        if (!EnsureTrayIconAdded(mDlg)) {
+            return;
+        }
+    }
+    PopulateTrayNotifyData(mDlg);
 
     std::wstring tip = L"AlienCockpit | Lights: ";
     tip += (conf->lightsOn ? L"ON" : L"OFF");
@@ -188,7 +235,12 @@ static void UpdateTrayIconAndTooltip(bool forceScan = false) {
         }
     }
     wcsncpy_s(g_nid.szTip, tip.c_str(), _TRUNCATE);
-    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
+    if (!Shell_NotifyIconW(NIM_MODIFY, &g_nid)) {
+        g_trayAdded = false;
+        if (!EnsureTrayIconAdded(mDlg)) {
+            SetTimer(mDlg, TIMER_TRAY_RETRY, 500, nullptr);
+        }
+    }
 }
 
 static std::vector<std::string> ParseCsvLine(const std::string& rawLine) {
@@ -551,17 +603,13 @@ static void EnsureDefaultAuroraProfile() {
 }
 
 static void InitTrayIcon(HWND hwnd) {
-    g_nid.cbSize = sizeof(NOTIFYICONDATAW);
-    g_nid.hWnd = hwnd;
-    g_nid.uID = 1;
-    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    g_nid.uCallbackMessage = WM_TRAYICON;
-    UINT iconRes = (conf && !conf->lightsOn) ? IDI_ALIENFX_OFF : IDI_ALIENFX_ON;
-    g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
-    wcscpy_s(g_nid.szTip, L"AlienCockpit — AWCC Alternative");
-    if (Shell_NotifyIconW(NIM_ADD, &g_nid)) {
-        g_trayAdded = true;
-        UpdateTrayIconAndTooltip();
+    if (!g_nid.szTip[0]) {
+        wcscpy_s(g_nid.szTip, L"AlienCockpit — AWCC Alternative");
+    }
+    if (EnsureTrayIconAdded(hwnd)) {
+        UpdateTrayIconAndTooltip(false);
+    } else if (hwnd) {
+        SetTimer(hwnd, TIMER_TRAY_RETRY, 500, nullptr);
     }
 }
 
@@ -572,10 +620,36 @@ static void RemoveTrayIcon() {
     }
 }
 
+static void InitWebView(HWND hwnd);
+
+static void HideMainWindow(HWND hwnd) {
+    if (!hwnd) return;
+    if (g_webviewController) {
+        g_webviewController->put_IsVisible(FALSE);
+    }
+    ShowWindow(hwnd, SW_HIDE);
+}
+
 static void ShowMainWindow(HWND hwnd) {
-    ShowWindow(hwnd, SW_RESTORE);
-    ShowWindow(hwnd, SW_SHOW);
+    if (!hwnd || g_exiting.load(std::memory_order_acquire)) return;
+    if (IsIconic(hwnd)) {
+        ShowWindow(hwnd, SW_RESTORE);
+    } else {
+        ShowWindow(hwnd, SW_SHOW);
+    }
+    UpdateWindow(hwnd);
     SetForegroundWindow(hwnd);
+
+    if (g_webviewController) {
+        RECT bounds{};
+        GetClientRect(hwnd, &bounds);
+        g_webviewController->put_Bounds(bounds);
+        g_webviewController->put_IsVisible(TRUE);
+        g_webviewController->NotifyParentWindowPositionChanged();
+        g_webviewController->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    } else if (!g_webviewInitializing) {
+        InitWebView(hwnd);
+    }
 }
 
 static void ShowTrayMenu(HWND hwnd) {
@@ -615,22 +689,28 @@ static void PostJsonToUI(const std::string& json) {
 }
 
 static void InitWebView(HWND hwnd) {
+    if (g_webviewInitializing || g_webviewController || !hwnd || g_exiting.load(std::memory_order_acquire)) {
+        return;
+    }
+    g_webviewInitializing = true;
     std::wstring userDataFolder = GetWebViewUserDataFolder();
     HRESULT hrEnv = CreateCoreWebView2EnvironmentWithOptions(nullptr, userDataFolder.c_str(), nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
             [hwnd](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
-                if (FAILED(result) || !env || g_exiting.load(std::memory_order_acquire)) {
-                    if (!g_exiting.load(std::memory_order_acquire)) {
+                if (FAILED(result) || !env || g_exiting.load(std::memory_order_acquire) || !IsWindow(hwnd)) {
+                    g_webviewInitializing = false;
+                    if (!g_exiting.load(std::memory_order_acquire) && IsWindow(hwnd) && IsWindowVisible(hwnd)) {
                         MessageBoxW(hwnd, L"Failed to initialize Microsoft Edge WebView2 Runtime.\nPlease ensure WebView2 Runtime is installed.", L"AlienCockpit", MB_OK | MB_ICONERROR);
                     }
                     return result;
                 }
-                env->CreateCoreWebView2Controller(hwnd,
+                HRESULT hrCtrl = env->CreateCoreWebView2Controller(hwnd,
                     Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                         [hwnd](HRESULT res, ICoreWebView2Controller* controller) -> HRESULT {
-                            if (FAILED(res) || !controller || g_exiting.load(std::memory_order_acquire)) {
+                            g_webviewInitializing = false;
+                            if (FAILED(res) || !controller || g_exiting.load(std::memory_order_acquire) || !IsWindow(hwnd)) {
                                 if (controller) controller->Close();
-                                if (!g_exiting.load(std::memory_order_acquire)) {
+                                if (!g_exiting.load(std::memory_order_acquire) && IsWindow(hwnd) && IsWindowVisible(hwnd)) {
                                     MessageBoxW(hwnd, L"Failed to create WebView2 controller.", L"AlienCockpit", MB_OK | MB_ICONERROR);
                                 }
                                 return res;
@@ -641,6 +721,8 @@ static void InitWebView(HWND hwnd) {
                             RECT bounds{};
                             GetClientRect(hwnd, &bounds);
                             g_webviewController->put_Bounds(bounds);
+                            g_webviewController->put_IsVisible(IsWindowVisible(hwnd) ? TRUE : FALSE);
+                            g_webviewController->NotifyParentWindowPositionChanged();
 
                             // Set dark background to prevent white flash
                             ComPtr<ICoreWebView2Controller2> ctrl2;
@@ -717,14 +799,30 @@ static void InitWebView(HWND hwnd) {
                             g_webview->Navigate(L"https://aliencockpit.local/index.html");
                             return S_OK;
                         }).Get());
+                if (FAILED(hrCtrl)) {
+                    g_webviewInitializing = false;
+                }
                 return S_OK;
             }).Get());
     if (FAILED(hrEnv)) {
-        MessageBoxW(hwnd, L"Could not start WebView2 Environment. Please install the Microsoft Edge WebView2 Runtime.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+        g_webviewInitializing = false;
+        if (IsWindowVisible(hwnd)) {
+            MessageBoxW(hwnd, L"Could not start WebView2 Environment. Please install the Microsoft Edge WebView2 Runtime.", L"AlienCockpit", MB_OK | MB_ICONERROR);
+        }
     }
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (g_wmTaskbarCreated && msg == g_wmTaskbarCreated) {
+        g_trayAdded = false;
+        InitTrayIcon(hwnd);
+        return 0;
+    }
+    if (g_wmShowMainWindow && msg == g_wmShowMainWindow) {
+        ShowMainWindow(hwnd);
+        return 0;
+    }
+
     switch (msg) {
     case WM_NCCALCSIZE:
         if (wParam == TRUE) {
@@ -781,13 +879,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 
     case WM_SIZE:
-        if (g_webviewController) {
+        if (wParam == SIZE_MINIMIZED) {
+            HideMainWindow(hwnd);
+        } else if (g_webviewController) {
             RECT bounds{};
             GetClientRect(hwnd, &bounds);
             g_webviewController->put_Bounds(bounds);
+            g_webviewController->NotifyParentWindowPositionChanged();
         }
-        if (wParam == SIZE_MINIMIZED) {
-            ShowWindow(hwnd, SW_HIDE);
+        return 0;
+
+    case WM_MOVE:
+        if (g_webviewController) {
+            g_webviewController->NotifyParentWindowPositionChanged();
         }
         return 0;
 
@@ -804,6 +908,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             RECT bounds{};
             GetClientRect(hwnd, &bounds);
             g_webviewController->put_Bounds(bounds);
+            g_webviewController->NotifyParentWindowPositionChanged();
         }
         return 0;
     }
@@ -814,6 +919,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case WM_EXITSIZEMOVE:
         g_isMovingOrSizing = false;
+        if (g_webviewController) {
+            g_webviewController->NotifyParentWindowPositionChanged();
+        }
         return 0;
 
     case WM_APP_WINDOW_DRAG:
@@ -821,9 +929,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
         return 0;
 
+    case WM_APP_SYNC_TRAY:
+        UpdateTrayIconAndTooltip(false);
+        return 0;
+
     case WM_CLOSE:
         // Minimize to tray instead of quitting
-        ShowWindow(hwnd, SW_HIDE);
+        HideMainWindow(hwnd);
         return 0;
 
     case WM_QUERYENDSESSION:
@@ -847,6 +959,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
         } else if (wParam == TIMER_EFFECTS) {
             CockpitBridge::StepAnimatedEffects();
+        } else if (wParam == TIMER_TRAY_RETRY) {
+            if (g_trayAdded) {
+                KillTimer(hwnd, TIMER_TRAY_RETRY);
+            } else {
+                InitTrayIcon(hwnd);
+            }
         }
         return 0;
 
@@ -902,6 +1020,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_exiting.store(true, std::memory_order_release);
         KillTimer(hwnd, TIMER_TELEMETRY);
         KillTimer(hwnd, TIMER_EFFECTS);
+        KillTimer(hwnd, TIMER_TRAY_RETRY);
         if (g_kbdHook) {
             UnhookWindowsHookEx(g_kbdHook);
             g_kbdHook = nullptr;
@@ -921,6 +1040,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdShow) {
     hInst = hInstance;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    std::wstring exeDir = GetExeDirectory();
+    if (!exeDir.empty()) {
+        SetCurrentDirectoryW(exeDir.c_str());
+    }
+
+    g_wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+    g_wmShowMainWindow = RegisterWindowMessageW(L"AlienCockpit_ShowMainWindow");
 
     bool isRelaunch = (lpCmdLine && wcsstr(lpCmdLine, L"--relaunch") != nullptr);
     bool noElevate = (lpCmdLine && wcsstr(lpCmdLine, L"--no-elevate") != nullptr);
@@ -942,8 +1069,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     }
     if (mutexErr == ERROR_ALREADY_EXISTS) {
         HWND existing = FindWindowW(L"AlienCockpitWindowClass", nullptr);
+        for (int retry = 0; !existing && retry < 25; ++retry) {
+            Sleep(100);
+            existing = FindWindowW(L"AlienCockpitWindowClass", nullptr);
+        }
         if (existing) {
-            ShowMainWindow(existing);
+            DWORD targetPid = 0;
+            GetWindowThreadProcessId(existing, &targetPid);
+            if (targetPid) {
+                AllowSetForegroundWindow(targetPid);
+            }
+            if (g_wmShowMainWindow) {
+                PostMessageW(existing, g_wmShowMainWindow, 0, 0);
+            }
         }
         if (g_hMutex) {
             CloseHandle(g_hMutex);
@@ -965,6 +1103,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
             CoUninitialize();
             return 0;
         }
+    }
+
+    if (isRelaunch && IsUserAnAdmin() && conf->startWindows && conf->alwaysAdmin && StartupManager::IsStartupEnabled()) {
+        StartupManager::SetStartupEnabled(true, conf->startMinimized != 0, true);
     }
 
     mon = new MonHelper();
@@ -1017,6 +1159,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
 
     mDlg = hwnd;
 
+    if (g_wmTaskbarCreated) {
+        ChangeWindowMessageFilterEx(hwnd, g_wmTaskbarCreated, MSGFLT_ALLOW, nullptr);
+    }
+    if (g_wmShowMainWindow) {
+        ChangeWindowMessageFilterEx(hwnd, g_wmShowMainWindow, MSGFLT_ALLOW, nullptr);
+    }
+
     // Enable Windows 11 Immersive Dark Mode, Rounded Corners & Seamless Border
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
@@ -1027,7 +1176,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
 
     InitTrayIcon(hwnd);
-    InitWebView(hwnd);
     SetTimer(hwnd, TIMER_TELEMETRY, 1500, nullptr);
     SetTimer(hwnd, TIMER_EFFECTS, 33, nullptr);
     if (conf->startupIntro && conf->lightsOn) {
@@ -1039,6 +1187,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
         ShowWindow(hwnd, nCmdShow ? nCmdShow : SW_SHOWNORMAL);
         UpdateWindow(hwnd);
         SetForegroundWindow(hwnd);
+        InitWebView(hwnd);
     }
 
     MSG msg{};

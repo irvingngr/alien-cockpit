@@ -385,7 +385,7 @@ void FXHelper::SetState(bool force) {
 	DebugPrint(string("Status: ") + (force ? "Forced, " : "") + to_string(conf->stateOn) + ", " + to_string(finalBrightness) + "\n");
 	if (force || oldBr != finalBrightness || oldPM != finalPBState) {
 		if (mDlg)
-			conf->SetIconState();
+			PostMessageW(mDlg, WM_APP + 11, 0, 0);
 		if (force && !finalPBState)
 			QueryAllDevs(LightQueryElement({ 1, 2 }));
 		QueryAllDevs(LightQueryElement({ 0, 2 }));
