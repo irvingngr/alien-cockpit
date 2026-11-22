@@ -9,7 +9,7 @@
 <p align="center">
   <img src="AlienCockpit/assets/AW18-10.png" alt="Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)" width="460" />
   <br />
-  <sub><b>Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)</b> — Full 45-LED Chassis, Rear Lightbar (#0–#30), Left/Right Fans (#34/#33), Lid Alienhead (#32), Power Button (#31), and 10-LED RGB Touchpad (#35–#44)</sub>
+  <sub><b>Optimized for Alienware 16 &amp; 18 Area-51 (AA18250)</b> — Full 45-LED Chassis, Rear Lightbar (#0–#30), Left/Right Fans (#34/#33), Lid Alienhead (#32), Power Button (#31), and 10-LED RGB Touchpad (#35–#44)</sub>
 </p>
 
 <p align="center">
