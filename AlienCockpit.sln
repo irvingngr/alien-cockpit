@@ -12,25 +12,15 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AlienCockpit", "AlienCockpi
 		{E6F98B66-1C66-4AFD-8A48-FAA1022F8196} = {E6F98B66-1C66-4AFD-8A48-FAA1022F8196}
 	EndProjectSection
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AlienFX_SDK_noACPI", "AlienFX-SDK\AlienFX_SDK\AlienFX_SDK_noACPI.vcxproj", "{2FC5DA06-339F-48B8-ACDF-34FAA8DBFBB7}"
-EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AlienFX_SDK", "AlienFX-SDK\AlienFX_SDK\AlienFX_SDK.vcxproj", "{90879993-7449-4A28-972E-7228D4C4D0A8}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "alienfan-SDK_v2", "alienfan-tools\alienfan-SDK_v2\alienfan-SDK_v2.vcxproj", "{9321A480-9118-4173-B79D-45D8253C2C47}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "alienfan-SDK", "alienfan-tools\alienfan-SDK\alienfan-SDK.vcxproj", "{41343B7C-6C9F-4AD4-9D27-050B3D76290D}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Common", "Common\Common.vcxproj", "{3D4EF0C4-282C-4318-8FBB-133514A8F0DC}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RegHelperLib", "RegHelperLib\RegHelperLib.vcxproj", "{5DCB3394-1906-4FEF-8543-83A3FB8A25F8}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "kiss_fft", "AlienCockpit\kiss_fft\kiss_fft.vcxproj", "{E6F98B66-1C66-4AFD-8A48-FAA1022F8196}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "alienfx-cli", "alienfx-cli\alienfx-cli.vcxproj", "{FF6119EA-878F-4E7B-9FCD-8410A5D3FBF8}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "alienfan-cli", "alienfan-tools\alienfan-cli\alienfan-tools.vcxproj", "{D6AD2E10-F61C-43F1-87EA-E77DEA12DD42}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "LightFX", "LightFX\LightFX.vcxproj", "{9E86C7E5-6E4C-4120-B8A5-9AB53B57F918}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -42,10 +32,6 @@ Global
 		{A1E9C0C4-1100-4F21-9A01-8899AABBCCDD}.Debug|x64.Build.0 = Debug|x64
 		{A1E9C0C4-1100-4F21-9A01-8899AABBCCDD}.Release|x64.ActiveCfg = Release|x64
 		{A1E9C0C4-1100-4F21-9A01-8899AABBCCDD}.Release|x64.Build.0 = Release|x64
-		{2FC5DA06-339F-48B8-ACDF-34FAA8DBFBB7}.Debug|x64.ActiveCfg = Debug|x64
-		{2FC5DA06-339F-48B8-ACDF-34FAA8DBFBB7}.Debug|x64.Build.0 = Debug|x64
-		{2FC5DA06-339F-48B8-ACDF-34FAA8DBFBB7}.Release|x64.ActiveCfg = Release|x64
-		{2FC5DA06-339F-48B8-ACDF-34FAA8DBFBB7}.Release|x64.Build.0 = Release|x64
 		{90879993-7449-4A28-972E-7228D4C4D0A8}.Debug|x64.ActiveCfg = Debug|x64
 		{90879993-7449-4A28-972E-7228D4C4D0A8}.Debug|x64.Build.0 = Debug|x64
 		{90879993-7449-4A28-972E-7228D4C4D0A8}.Release|x64.ActiveCfg = Release|x64

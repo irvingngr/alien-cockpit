@@ -106,14 +106,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="kiss_fft.cpp" />
-    <ClCompile Include="tools\kiss_fastfir.c" />
-    <ClCompile Include="tools\kiss_fftnd.c" />
     <ClCompile Include="tools\kiss_fftr.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="kiss_fft.h" />
-    <ClInclude Include="tools\kfc.h" />
-    <ClInclude Include="tools\kiss_fftnd.h" />
     <ClInclude Include="tools\kiss_fftr.h" />
     <ClInclude Include="_kiss_fft_guts.h" />
   </ItemGroup>
