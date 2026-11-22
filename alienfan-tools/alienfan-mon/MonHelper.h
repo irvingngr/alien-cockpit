@@ -40,7 +40,12 @@ public:
 	WORD GetSensorData(bool forced = false);
 	void GetTelemetrySnapshot(map<WORD, short>& outSen, map<WORD, short>& outMax, vector<pair<byte, pair<WORD, byte>>>& outFans);
 	void ResetBoost();
-	void SetOC();
+	void SetOC(bool force = false);
 	void SetCpuModes();
+	void SetCpuThrottleMax(DWORD acPct, DWORD dcPct);
+	void ReadCpuSettings(DWORD& acBoost, DWORD& dcBoost, DWORD& acMaxPct, DWORD& dcMaxPct);
+	int FindPowerIndexByCodes(const vector<byte>& preferredCodes) const;
+	byte GetCurrentBiosCode() const;
+	static string GetBiosPowerModeName(byte code);
 };
 

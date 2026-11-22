@@ -91,16 +91,22 @@ EventHandler::~EventHandler()
 
 void EventHandler::ChangePowerState()
 {
-	SYSTEM_POWER_STATUS state;
-	GetSystemPowerStatus(&state);
-	if (conf->statePower != (bool)state.ACLineStatus) {
-		conf->statePower = fan_conf->acPower = state.ACLineStatus;	 
+	SYSTEM_POWER_STATUS state{};
+	if (!GetSystemPowerStatus(&state) || state.ACLineStatus == 255) {
+		return;
+	}
+	bool onAc = (state.ACLineStatus == 1);
+	if (conf->statePower != onAc) {
+		conf->statePower = fan_conf->acPower = onAc;
 		DebugPrint("Power state changed!\n");
 		if (conf->enableProfSwitch && hEvent) {
 			CheckProfileChange();
 			SwitchActiveProfile(conf->activeProfile, true);
 		} else
 			SwitchActiveProfile(conf->SamePower(conf->activeProfile) ? conf->activeProfile : NULL, true);
+		if (fxhl) {
+			fxhl->SetState(true);
+		}
 	}
 }
 

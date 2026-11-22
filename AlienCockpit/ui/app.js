@@ -57,7 +57,11 @@ const state = {
     { temp: 92, boost: 100 }
   ],
   fanMetrics: new Map(), // id -> { rpm, percent, angle }
-  isDraggingSelect: false
+  isDraggingSelect: false,
+  tempUnit: 'C',
+  perfTuningDirty: false,
+  xmpDirty: false,
+  lastPerf: null
 };
 
 function sendCommand(payload) {
@@ -1823,16 +1827,15 @@ function applyTelemetry(data) {
   }
 
   if (data.thermals) {
-    if (typeof data.thermals.powerMode === 'number') {
-      const isAuto = !!data.thermals.fanAuto;
-      document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
-        const pm = b.dataset.pm;
-        const active = (pm === 'auto')
-          ? isAuto
-          : (!isAuto && parseInt(pm, 10) === data.thermals.powerMode);
-        b.classList.toggle('active', active);
-      });
-    }
+    const isAuto = !!data.thermals.fanAuto;
+    const activeProfileKey = (data.thermals.perfProfile || (data.performance && data.performance.profile) || 'balanced').toLowerCase();
+    document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
+      const pm = b.dataset.pm;
+      const active = (pm === 'auto')
+        ? isAuto
+        : (!isAuto && pm === activeProfileKey);
+      b.classList.toggle('active', active);
+    });
 
     const sList = document.getElementById('sensor-list');
     sList.innerHTML = '';
@@ -1853,7 +1856,7 @@ function applyTelemetry(data) {
       sensors.forEach((s) => {
         const row = document.createElement('div');
         row.className = 'telemetry-row';
-        row.innerHTML = `<span>${s.name}</span><span class="telemetry-val">${s.temp}°C</span>`;
+        row.innerHTML = `<span>${s.name}</span><span class="telemetry-val">${formatTempValue(s.temp)}</span>`;
         sList.appendChild(row);
       });
     }
@@ -1914,6 +1917,11 @@ function applyTelemetry(data) {
       });
       ensureFanSpinLoop();
     }
+  }
+
+  if (data.performance) {
+    state.lastPerf = data.performance;
+    renderPerformanceTelemetry(data.performance);
   }
 }
 
@@ -2260,7 +2268,10 @@ function renderHardwareDiagnostics(data) {
   if (!panel || !out) return;
   const lines = [];
   if (data.wmi) {
-    lines.push(`[WMI / ACPI] Alienware=${!!data.wmi.isAlienware} Supported=${!!data.wmi.isSupported} GMode=${!!data.wmi.isGmode} Fans=${data.wmi.fans} Sensors=${data.wmi.sensors} PowerModes=${data.wmi.powerModes}`);
+    lines.push(`[WMI / ACPI] Alienware=${!!data.wmi.isAlienware} Supported=${!!data.wmi.isSupported} GMode=${!!data.wmi.isGmode} TCC=${!!data.wmi.isTcc}(${data.wmi.maxTCC || 0}-${data.wmi.maxOffset || 0}) XMP=${!!data.wmi.isXMP} Fans=${data.wmi.fans} Sensors=${data.wmi.sensors} PowerModes=${data.wmi.powerModes}`);
+    if (Array.isArray(data.wmi.powerCodes) && data.wmi.powerCodes.length > 0) {
+      lines.push(`  • BIOS Power Codes: ${data.wmi.powerCodes.join(', ')}`);
+    }
   }
   if (Array.isArray(data.mappedDevices)) {
     lines.push(`[Mapped Devices: ${data.mappedDevices.length}]`);
@@ -2750,7 +2761,8 @@ function initMiscActions() {
       if (btn.dataset.pm === 'auto') {
         sendCommand({ cmd: 'setFanAuto' });
       } else {
-        sendCommand({ cmd: 'setPowerMode', mode: parseInt(btn.dataset.pm, 10) });
+        state.perfTuningDirty = false;
+        sendCommand({ cmd: 'applyPerformanceProfile', profile: btn.dataset.pm });
       }
     });
   });
@@ -2767,10 +2779,10 @@ function initMiscActions() {
       updateCurvePresetBadge();
       if (presetKey === 'max') {
         document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
-          b.classList.toggle('active', parseInt(b.dataset.pm, 10) === 3);
+          b.classList.toggle('active', b.dataset.pm === 'overdrive');
         });
         sendCommand({ cmd: 'setFanCurve', fanId: -1, sensorId: getPrimarySensorId(), active: false, points: state.fanCurve });
-        sendCommand({ cmd: 'setPowerMode', mode: 3 });
+        sendCommand({ cmd: 'applyPerformanceProfile', profile: 'overdrive' });
       } else {
         document.querySelectorAll('#power-mode-bar .seg-btn').forEach((b) => {
           b.classList.toggle('active', b.dataset.pm === 'auto');
@@ -2923,11 +2935,344 @@ function initMiscActions() {
   });
 }
 
+const PERF_PROFILE_DESCRIPTIONS = {
+  battery: 'Battery Mode: BIOS Battery Saver (0xA5), CPU Turbo Boost OFF, 80% DC processor cap for maximum autonomy.',
+  quiet: 'Quiet Mode: BIOS Quiet acoustics (0xA3), Efficient AC / Off DC CPU Boost, low fan noise profile.',
+  balanced: 'Balanced Mode: BIOS Balanced (0xA0), Efficient Aggressive AC / Efficient DC CPU Boost for daily workloads.',
+  performance: 'Performance Mode: BIOS Performance (0xA4 / 0xA1), Aggressive AC CPU Boost & higher thermal envelope.',
+  overdrive: 'Overdrive (G-Mode): BIOS G-Mode (0xAB), maximum fan airflow, Aggressive CPU Boost & full TCC headroom.',
+  custom: 'Custom Mode: Manual BIOS unlock (0x00) with your custom CPU Boost, Max State, TCC, XMP & Fan Curve.'
+};
+
+const CPU_BOOST_LABELS = ['Off', 'Enabled', 'Aggressive', 'Efficient', 'Eff. Aggr.'];
+
+function formatTempValue(tempC) {
+  if (typeof tempC !== 'number' || !Number.isFinite(tempC) || tempC < 0) return '--';
+  if (state.tempUnit === 'F') {
+    return `${Math.round((tempC * 9) / 5 + 32)}°F`;
+  }
+  return `${Math.round(tempC)}°C`;
+}
+
+function formatDiskSpeed(kbps) {
+  if (typeof kbps !== 'number' || !Number.isFinite(kbps) || kbps < 0) return '0 KB/s';
+  if (kbps >= 1024) return `${(kbps / 1024).toFixed(1)} MB/s`;
+  return `${kbps.toFixed(1)} KB/s`;
+}
+
+function setGaugeArc(id, pct) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+  const len = (typeof el.getTotalLength === 'function') ? el.getTotalLength() : 288.3;
+  el.style.strokeDasharray = `${len}`;
+  el.style.strokeDashoffset = `${len * (1 - clamped / 100)}`;
+}
+
+function renderPerformanceTelemetry(perf) {
+  if (!perf) return;
+  const setText = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+
+  const activeKey = (perf.profile || 'balanced').toLowerCase();
+  document.querySelectorAll('#perf-profile-bar .perf-profile-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.perf === activeKey);
+  });
+
+  const descEl = document.getElementById('perf-profile-desc');
+  if (descEl && PERF_PROFILE_DESCRIPTIONS[activeKey]) {
+    descEl.textContent = PERF_PROFILE_DESCRIPTIONS[activeKey];
+  }
+
+  const biosHex = typeof perf.biosCode === 'number'
+    ? `0x${perf.biosCode.toString(16).toUpperCase().padStart(2, '0')}`
+    : '';
+  setText('perf-bios-label', perf.available
+    ? `BIOS: ${perf.biosName || 'Active'} (${biosHex})`
+    : (perf.isAdmin ? 'BIOS: No ACPI Thermal WMI' : 'BIOS: Admin Required'));
+
+  const adminBanner = document.getElementById('perf-admin-banner');
+  if (adminBanner) {
+    adminBanner.style.display = (!perf.isAdmin && !perf.available) ? 'flex' : 'none';
+  }
+
+  // CPU Card
+  if (perf.cpu) {
+    const c = perf.cpu;
+    setGaugeArc('gauge-arc-cpu', c.util);
+    setText('perf-cpu-pct', `${Math.round(c.util || 0)}`);
+    setText('perf-cpu-sub', c.currentGhz > 0.1 ? `${c.currentGhz.toFixed(2)} GHz` : 'Utilization');
+    setText('perf-cpu-model', c.name || 'System Processor');
+    setText('perf-cpu-temp', formatTempValue(c.temp));
+    setText('perf-cpu-clock', c.currentGhz > 0.1 ? `${c.currentGhz.toFixed(2)} GHz` : (c.baseGhz > 0.1 ? `${c.baseGhz.toFixed(2)} GHz` : '--'));
+
+    const pwrLbl = document.getElementById('perf-cpu-pwr-lbl');
+    if (typeof c.powerW === 'number' && c.powerW >= 0) {
+      if (pwrLbl) pwrLbl.textContent = 'Power (W)';
+      setText('perf-cpu-power', `${c.powerW.toFixed(1)} W`);
+    } else {
+      if (pwrLbl) pwrLbl.textContent = 'Boost Mode';
+      const activeBoostIdx = perf.acOnline ? c.boostAc : c.boostDc;
+      setText('perf-cpu-power', CPU_BOOST_LABELS[activeBoostIdx] || 'Enabled');
+    }
+    setText('perf-cpu-fan', c.fanRpm >= 0 ? `${c.fanRpm} RPM` : '-- RPM');
+
+    if (!state.perfTuningDirty) {
+      const bAc = document.getElementById('perf-boost-ac');
+      const bDc = document.getElementById('perf-boost-dc');
+      const mAc = document.getElementById('perf-max-ac');
+      const mDc = document.getElementById('perf-max-dc');
+      if (bAc && typeof c.boostAc === 'number') bAc.value = String(Math.max(0, Math.min(4, c.boostAc)));
+      if (bDc && typeof c.boostDc === 'number') bDc.value = String(Math.max(0, Math.min(4, c.boostDc)));
+      if (mAc && typeof c.maxAc === 'number') {
+        mAc.value = String(Math.max(25, Math.min(100, c.maxAc)));
+        setText('perf-max-ac-val', `${mAc.value}%`);
+      }
+      if (mDc && typeof c.maxDc === 'number') {
+        mDc.value = String(Math.max(25, Math.min(100, c.maxDc)));
+        setText('perf-max-dc-val', `${mDc.value}%`);
+      }
+      const tccSlider = document.getElementById('perf-tcc-slider');
+      const tccNote = document.getElementById('perf-tcc-note');
+      if (tccSlider) {
+        if (c.tccSupported) {
+          tccSlider.disabled = false;
+          tccSlider.min = String(c.tccMin || 85);
+          tccSlider.max = String(c.tccMax || 100);
+          tccSlider.value = String(c.tccCurrent || c.tccMax || 100);
+          setText('perf-tcc-val', formatTempValue(Number(tccSlider.value)));
+          if (tccNote) tccNote.textContent = `BIOS TCC range: ${c.tccMin}°C – ${c.tccMax}°C`;
+        } else {
+          tccSlider.disabled = true;
+          setText('perf-tcc-val', 'N/A');
+          if (tccNote) tccNote.textContent = 'TCC Offset is not exposed by this BIOS.';
+        }
+      }
+    }
+  }
+
+  // GPU Card
+  if (perf.gpu) {
+    const g = perf.gpu;
+    setGaugeArc('gauge-arc-gpu', g.util);
+    setText('perf-gpu-pct', `${Math.round(g.util || 0)}`);
+    setText('perf-gpu-model', g.name || 'Graphics Adapter');
+    setText('perf-gpu-temp', formatTempValue(g.temp));
+    setText('perf-gpu-power', (typeof g.powerW === 'number' && g.powerW >= 0) ? `${g.powerW.toFixed(1)} W` : '--');
+    setText('perf-gpu-clock', g.clockMhz >= 0 ? `${g.clockMhz} MHz` : '--');
+    setText('perf-gpu-fan', g.fanRpm >= 0 ? `${g.fanRpm} RPM` : '-- RPM');
+
+    setText('perf-gpu-vram-used', (typeof g.vramUsedGb === 'number' && g.vramUsedGb >= 0) ? `${g.vramUsedGb.toFixed(2)} GB` : '--');
+    setText('perf-gpu-vram-total', (typeof g.vramTotalGb === 'number' && g.vramTotalGb > 0) ? `${g.vramTotalGb.toFixed(1)} GB` : '--');
+    setText('perf-gpu-mclk', g.memClockMhz >= 0 ? `${g.memClockMhz} MHz` : '--');
+    setText('perf-gpu-plim', (typeof g.powerLimitW === 'number' && g.powerLimitW > 0) ? `${g.powerLimitW.toFixed(0)} W` : '--');
+    setText('perf-gpu-src', g.source || '--');
+  }
+
+  // Memory Card
+  if (perf.memory) {
+    const m = perf.memory;
+    setGaugeArc('gauge-arc-mem', m.pct);
+    setText('perf-mem-used', m.usedGb > 0 ? m.usedGb.toFixed(1) : '0');
+    const speedStr = m.speedMhz > 0 ? `${m.speedMhz} MT/s${m.type ? ' ' + m.type : ''}` : (m.type || 'System RAM');
+    setText('perf-mem-speed', speedStr);
+    setText('perf-mem-total', `${m.totalGb > 0 ? m.totalGb.toFixed(1) : '--'} GB Total (${m.pct || 0}%)`);
+    setText('perf-mem-inuse', `${m.usedGb.toFixed(1)} GB`);
+    setText('perf-mem-avail', `${m.availGb.toFixed(1)} GB`);
+    setText('perf-mem-cached', `${m.cachedGb.toFixed(1)} GB`);
+    setText('perf-mem-wired', `${m.wiredGb.toFixed(1)} GB`);
+    setText('perf-mem-speed-adv', speedStr);
+    setText('perf-mem-commit', `${m.commitGb.toFixed(1)} GB`);
+
+    const xmpSel = document.getElementById('perf-xmp-select');
+    const xmpBtn = document.getElementById('btn-apply-xmp');
+    const xmpNote = document.getElementById('perf-xmp-note');
+    if (xmpSel && !state.xmpDirty) {
+      xmpSel.value = String(Math.max(0, Math.min(2, m.xmpProfile || 0)));
+    }
+    if (xmpSel && xmpBtn && xmpNote) {
+      if (m.xmpSupported || m.xmpWmiPresent) {
+        xmpSel.disabled = false;
+        xmpBtn.disabled = false;
+        xmpNote.textContent = m.xmpSupported
+          ? 'BIOS MemoryOCControl active. XMP profile changes typically apply after reboot.'
+          : 'BIOS MemoryOCControl detected; changes may require reboot and XMP-capable DIMMs.';
+      } else {
+        xmpSel.disabled = true;
+        xmpBtn.disabled = true;
+        xmpNote.textContent = 'BIOS Memory XMP WMI control is not exposed on this platform.';
+      }
+    }
+  }
+
+  // C: Drive Card
+  if (perf.disk) {
+    const d = perf.disk;
+    setGaugeArc('gauge-arc-disk', d.usedPct);
+    setText('perf-disk-used', d.usedGb > 0 ? `${Math.round(d.usedGb)}` : '0');
+    setText('perf-disk-sub', d.temp > 0 ? `Disk Space • ${formatTempValue(d.temp)}` : 'Disk Space');
+    setText('perf-disk-total', `${d.freeGb.toFixed(0)} GB Free / ${d.totalGb.toFixed(0)} GB Total`);
+    setText('perf-disk-active', `${d.activePct || 0}%`);
+    setText('perf-disk-resp', `${(d.responseMs || 0).toFixed(1)} ms`);
+    setText('perf-disk-read', formatDiskSpeed(d.readKbps));
+    setText('perf-disk-write', formatDiskSpeed(d.writeKbps));
+  }
+
+  // Raw BIOS Thermal Mode Chips
+  const chipWrap = document.getElementById('perf-bios-chips');
+  if (chipWrap) {
+    const modes = Array.isArray(perf.biosModes) ? perf.biosModes : [];
+    if (modes.length === 0) {
+      chipWrap.innerHTML = `<span class="hint-text">${perf.isAdmin ? 'No BIOS WMI thermal modes reported.' : 'Run as Administrator to view & switch BIOS WMI modes.'}</span>`;
+    } else {
+      chipWrap.innerHTML = '';
+      modes.forEach((bm) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `bios-chip${bm.active ? ' active' : ''}`;
+        btn.textContent = `${bm.name} (${bm.hex})`;
+        btn.title = `Switch hardware ACPI BIOS directly to ${bm.name} (${bm.hex})`;
+        btn.addEventListener('click', () => {
+          state.perfTuningDirty = false;
+          sendCommand({ cmd: 'setBiosPowerMode', index: bm.index, code: bm.code });
+        });
+        chipWrap.appendChild(btn);
+      });
+    }
+  }
+}
+
+function initPerformanceControls() {
+  // 6 AWCC Profile buttons
+  document.querySelectorAll('#perf-profile-bar .perf-profile-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const profile = btn.dataset.perf;
+      if (!profile) return;
+      document.querySelectorAll('#perf-profile-bar .perf-profile-btn').forEach((b) => {
+        b.classList.toggle('active', b === btn);
+      });
+      state.perfTuningDirty = false;
+      sendCommand({ cmd: 'applyPerformanceProfile', profile });
+    });
+  });
+
+  // Card sub-tabs (Overview vs Advanced View / XMP)
+  document.querySelectorAll('.perf-subtab').forEach((tabBtn) => {
+    tabBtn.addEventListener('click', () => {
+      const card = tabBtn.dataset.card;
+      const view = tabBtn.dataset.view;
+      const parentCard = tabBtn.closest('.perf-card');
+      if (!parentCard) return;
+      parentCard.querySelectorAll('.perf-subtab').forEach((b) => b.classList.toggle('active', b === tabBtn));
+      parentCard.querySelectorAll('.perf-card-body').forEach((body) => {
+        body.classList.toggle('active', body.dataset.cardBody === `${card}-${view}`);
+      });
+    });
+  });
+
+  // °C / °F toggle
+  document.querySelectorAll('.unit-toggle .unit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.tempUnit = btn.dataset.unit === 'F' ? 'F' : 'C';
+      document.querySelectorAll('.unit-toggle .unit-btn').forEach((b) => {
+        b.classList.toggle('active', b.dataset.unit === state.tempUnit);
+      });
+      if (state.lastPerf) {
+        renderPerformanceTelemetry(state.lastPerf);
+      }
+      const hudTemp = document.getElementById('hud-temp');
+      if (hudTemp && state.lastPerf && state.lastPerf.cpu && state.lastPerf.cpu.temp > 0) {
+        hudTemp.textContent = formatTempValue(state.lastPerf.cpu.temp);
+      }
+    });
+  });
+
+  // CPU Tuning dirty tracking & live slider readouts
+  const markDirty = () => { state.perfTuningDirty = true; };
+  ['perf-boost-ac', 'perf-boost-dc'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', markDirty);
+  });
+  const maxAc = document.getElementById('perf-max-ac');
+  if (maxAc) {
+    maxAc.addEventListener('input', () => {
+      state.perfTuningDirty = true;
+      const lbl = document.getElementById('perf-max-ac-val');
+      if (lbl) lbl.textContent = `${maxAc.value}%`;
+    });
+  }
+  const maxDc = document.getElementById('perf-max-dc');
+  if (maxDc) {
+    maxDc.addEventListener('input', () => {
+      state.perfTuningDirty = true;
+      const lbl = document.getElementById('perf-max-dc-val');
+      if (lbl) lbl.textContent = `${maxDc.value}%`;
+    });
+  }
+  const tccSlider = document.getElementById('perf-tcc-slider');
+  if (tccSlider) {
+    tccSlider.addEventListener('input', () => {
+      state.perfTuningDirty = true;
+      const lbl = document.getElementById('perf-tcc-val');
+      if (lbl) lbl.textContent = formatTempValue(Number(tccSlider.value));
+    });
+  }
+
+  const btnApplyCpu = document.getElementById('btn-apply-cpu-tuning');
+  if (btnApplyCpu) {
+    btnApplyCpu.addEventListener('click', () => {
+      const payload = {
+        cmd: 'setCpuTuning',
+        boostAc: parseInt(document.getElementById('perf-boost-ac')?.value || '2', 10),
+        boostDc: parseInt(document.getElementById('perf-boost-dc')?.value || '2', 10),
+        maxAc: parseInt(document.getElementById('perf-max-ac')?.value || '100', 10),
+        maxDc: parseInt(document.getElementById('perf-max-dc')?.value || '100', 10)
+      };
+      if (tccSlider && !tccSlider.disabled) {
+        payload.tcc = parseInt(tccSlider.value, 10);
+      }
+      state.perfTuningDirty = false;
+      sendCommand(payload);
+    });
+  }
+
+  const xmpSel = document.getElementById('perf-xmp-select');
+  if (xmpSel) {
+    xmpSel.addEventListener('change', () => { state.xmpDirty = true; });
+  }
+  const btnApplyXmp = document.getElementById('btn-apply-xmp');
+  if (btnApplyXmp) {
+    btnApplyXmp.addEventListener('click', () => {
+      state.xmpDirty = false;
+      sendCommand({ cmd: 'setMemoryXmp', profile: parseInt(xmpSel?.value || '0', 10) });
+    });
+  }
+
+  const btnOpenFans = document.getElementById('btn-perf-open-fans');
+  if (btnOpenFans) {
+    btnOpenFans.addEventListener('click', () => {
+      const thermalNav = document.querySelector('.nav-item[data-tab="thermals"]');
+      if (thermalNav) thermalNav.click();
+    });
+  }
+
+  const btnPerfReset = document.getElementById('btn-perf-reset');
+  if (btnPerfReset) {
+    btnPerfReset.addEventListener('click', () => {
+      state.perfTuningDirty = false;
+      sendCommand({ cmd: 'resetPerformanceDefaults' });
+    });
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   buildKeyboard();
   buildNumpad();
   initNavigation();
   initLightingControls();
+  initPerformanceControls();
   initLedProbeDeck();
   initWindowControls();
   initMiscActions();
@@ -2952,8 +3297,29 @@ document.addEventListener('DOMContentLoaded', () => {
         { name: 'Alienware AW610M Wireless Mouse', type: 'mouse', percentage: 74, charging: false, acOnline: false }
       ],
       thermals: {
+        perfProfile: 'balanced',
         sensors: [{ name: 'CPU Package', temp: 54 }, { name: 'GPU Core', temp: 48 }],
         fans: [{ id: 0, rpm: 2450, percent: 45 }, { id: 1, rpm: 2300, percent: 42 }]
+      },
+      performance: {
+        available: true,
+        isAdmin: true,
+        acOnline: true,
+        profile: 'balanced',
+        biosCode: 0xA0,
+        biosName: 'Balanced',
+        biosModes: [
+          { index: 0, code: 0x00, hex: '0x00', name: 'Custom / Manual', active: false },
+          { index: 1, code: 0xA0, hex: '0xA0', name: 'Balanced', active: true },
+          { index: 2, code: 0xA3, hex: '0xA3', name: 'Quiet', active: false },
+          { index: 3, code: 0xA4, hex: '0xA4', name: 'Performance', active: false },
+          { index: 4, code: 0xA5, hex: '0xA5', name: 'Battery Saver', active: false },
+          { index: 5, code: 0xAB, hex: '0xAB', name: 'Overdrive (G-Mode)', active: false }
+        ],
+        cpu: { name: 'Intel Core Ultra 9 275HX', util: 28, currentGhz: 4.65, powerW: 34.2, temp: 54, fanRpm: 2450, boostAc: 4, boostDc: 3, maxAc: 100, maxDc: 100, tccSupported: true, tccCurrent: 100, tccMin: 85, tccMax: 100 },
+        gpu: { name: 'NVIDIA GeForce RTX 5080 Laptop GPU', source: 'NVML', util: 19, temp: 48, powerW: 28.5, powerLimitW: 175, clockMhz: 1845, memClockMhz: 7000, vramUsedGb: 3.4, vramTotalGb: 16.0, fanRpm: 2300 },
+        memory: { totalGb: 64.0, usedGb: 18.4, availGb: 45.6, cachedGb: 11.2, wiredGb: 3.1, commitGb: 22.8, pct: 29, speedMhz: 6400, type: 'DDR5', xmpSupported: true, xmpProfile: 1 },
+        disk: { totalGb: 1900, usedGb: 420, freeGb: 1480, usedPct: 22, activePct: 2, responseMs: 0.8, readKbps: 1450, writeKbps: 620, temp: 41 }
       }
     });
   }

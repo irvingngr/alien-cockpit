@@ -58,7 +58,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>dwmapi.lib;shlwapi.lib;shell32.lib;setupapi.lib;cfgmgr32.lib;wbemuuid.lib;winmm.lib;dxgi.lib;d3d11.lib;wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dwmapi.lib;shlwapi.lib;shell32.lib;setupapi.lib;cfgmgr32.lib;wbemuuid.lib;winmm.lib;dxgi.lib;d3d11.lib;wtsapi32.lib;pdh.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>$(ProjectDir)src\AlienCockpit.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
@@ -84,7 +84,7 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>dwmapi.lib;shlwapi.lib;shell32.lib;setupapi.lib;cfgmgr32.lib;wbemuuid.lib;winmm.lib;dxgi.lib;d3d11.lib;wtsapi32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dwmapi.lib;shlwapi.lib;shell32.lib;setupapi.lib;cfgmgr32.lib;wbemuuid.lib;winmm.lib;dxgi.lib;d3d11.lib;wtsapi32.lib;pdh.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>$(ProjectDir)src\AlienCockpit.manifest;%(AdditionalManifestFiles)</AdditionalManifestFiles>
@@ -97,6 +97,7 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="backend\BatteryMonitor.cpp" />
+    <ClCompile Include="backend\PerformanceMonitor.cpp" />
     <ClCompile Include="backend\StartupManager.cpp" />
     <ClCompile Include="backend\CockpitBridge.cpp" />
     <ClCompile Include="backend\ConfigHandler.cpp" />
@@ -113,6 +114,7 @@ xcopy /E /I /Y "$(ProjectDir)Mappings" "$(OutDir)Mappings"</Command>
     <ClInclude Include="backend\alienfx-gui.h" />
     <ClInclude Include="backend\SimpleJson.h" />
     <ClInclude Include="backend\BatteryMonitor.h" />
+    <ClInclude Include="backend\PerformanceMonitor.h" />
     <ClInclude Include="backend\StartupManager.h" />
     <ClInclude Include="backend\CockpitBridge.h" />
     <ClInclude Include="backend\ConfigHandler.h" />

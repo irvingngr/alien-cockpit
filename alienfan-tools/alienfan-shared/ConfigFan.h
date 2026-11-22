@@ -69,6 +69,9 @@ public:
 	DWORD diskSensors;
 	DWORD numlockActive;
 	//DWORD instantUpdate;
+	DWORD cpuMaxAc = 100;
+	DWORD cpuMaxDc = 100;
+	string activePerfProfile = "balanced";
 	bool acPower = true;
 
 	fan_profile prof;

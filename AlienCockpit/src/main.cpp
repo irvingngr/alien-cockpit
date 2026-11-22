@@ -15,6 +15,7 @@
 #include "../backend/EventHandler.h"
 #include "../backend/CockpitBridge.h"
 #include "../backend/BatteryMonitor.h"
+#include "../backend/PerformanceMonitor.h"
 #include "../backend/StartupManager.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
@@ -175,7 +176,8 @@ static void PopulateTrayNotifyData(HWND hwnd) {
     g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    UINT iconRes = (conf && !conf->lightsOn) ? IDI_ALIENFX_OFF : ((conf && conf->stateDimmed) ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON);
+    bool lightsEffectivelyOn = (conf && conf->lightsOn && conf->stateOn);
+    UINT iconRes = !lightsEffectivelyOn ? IDI_ALIENFX_OFF : ((conf && conf->stateDimmed) ? IDI_ALIENFX_DIM : IDI_ALIENFX_ON);
     g_nid.hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(iconRes));
 }
 
@@ -203,8 +205,9 @@ static void UpdateTrayIconAndTooltip(bool forceScan = false) {
     }
     PopulateTrayNotifyData(mDlg);
 
+    bool lightsEffectivelyOn = (conf->lightsOn && conf->stateOn);
     std::wstring tip = L"AlienCockpit | Lights: ";
-    tip += (conf->lightsOn ? L"ON" : L"OFF");
+    tip += (lightsEffectivelyOn ? (conf->stateDimmed ? L"DIM" : L"ON") : L"OFF");
 
     if (forceScan && g_telemetryBatteryWakeEvent) {
         SetEvent(g_telemetryBatteryWakeEvent);
@@ -778,7 +781,8 @@ static void InitWebView(HWND hwnd) {
                                                 jsonStr.find("\"activateProfile\"") != std::string::npos ||
                                                 jsonStr.find("\"applyGamePreset\"") != std::string::npos ||
                                                 jsonStr.find("\"restorePreset\"") != std::string::npos ||
-                                                jsonStr.find("\"setBrightness\"") != std::string::npos) {
+                                                jsonStr.find("\"setBrightness\"") != std::string::npos ||
+                                                jsonStr.find("\"setSettings\"") != std::string::npos) {
                                                 UpdateTrayIconAndTooltip(false);
                                             }
                                             PostJsonToUI(resp);
@@ -970,6 +974,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             UpdateTrayIconAndTooltip(true);
         }
         break;
+
+    case WM_POWERBROADCAST:
+        if (!g_exiting.load(std::memory_order_acquire) &&
+            (wParam == PBT_APMPOWERSTATUSCHANGE || wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)) {
+            if (eve) eve->ChangePowerState();
+            if (fxhl) fxhl->SetState(true);
+            UpdateTrayIconAndTooltip(true);
+            if (g_webview) {
+                PostJsonToUI(CockpitBridge::BuildFullStateJson());
+            }
+        }
+        return TRUE;
 
     case WM_TRAYICON:
         if (lParam == WM_LBUTTONDBLCLK || lParam == WM_LBUTTONUP) {
@@ -1211,6 +1227,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR lpCmdLine, int nCmdSho
         CloseHandle(g_telemetryThread);
         g_telemetryThread = nullptr;
     }
+    PerformanceMonitor::Shutdown();
     if (g_telemetryStopEvent) { CloseHandle(g_telemetryStopEvent); g_telemetryStopEvent = nullptr; }
     if (g_telemetryWakeEvent) { CloseHandle(g_telemetryWakeEvent); g_telemetryWakeEvent = nullptr; }
     if (g_telemetryBatteryWakeEvent) { CloseHandle(g_telemetryBatteryWakeEvent); g_telemetryBatteryWakeEvent = nullptr; }

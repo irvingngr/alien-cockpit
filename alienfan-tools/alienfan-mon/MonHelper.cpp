@@ -35,12 +35,16 @@ MonHelper::~MonHelper() {
 	delete acpi;
 }
 
-void MonHelper::SetOC()
+void MonHelper::SetOC(bool force)
 {
 	if (!acpi || !acpi->isSupported) return;
-	if (fan_conf->ocEnable) {
-		acpi->SetTCC(fan_conf->lastProf->currentTCC);
-		acpi->SetXMP(fan_conf->lastProf->memoryXMP);
+	if (fan_conf->ocEnable || force) {
+		if (acpi->isTcc && fan_conf->lastProf->currentTCC > 0) {
+			acpi->SetTCC(fan_conf->lastProf->currentTCC);
+		}
+		if (acpi->isXMP) {
+			acpi->SetXMP(fan_conf->lastProf->memoryXMP);
+		}
 	}
 }
 
@@ -103,10 +107,11 @@ void MonHelper::SetCurrentMode(int newMode) {
 		newMode = fan_conf->lastProf->gmodeStage ? powerSize :
 			fan_conf->acPower ? fan_conf->lastProf->powerStage : fan_conf->lastProf->powerStageDC;
 	}
-	if (newMode != powerMode) {
+	bool wasManualFullSpeed = fullSpeedManual;
+	if (newMode != powerMode || wasManualFullSpeed) {
 		if (newMode < powerSize) {
 			fullSpeedManual = false;
-			if (powerMode == powerSize) {
+			if (powerMode == powerSize || (acpi->isGmode && acpi->GetGMode() > 0)) {
 				acpi->SetGMode(0);
 				acpi->SetPower(0xa0);
 			}
@@ -212,6 +217,84 @@ void MonHelper::SetCpuModes() {
 		PowerSetActiveScheme(NULL, sch_guid);
 		LocalFree(sch_guid);
 		sch_guid = NULL;
+	}
+}
+
+void MonHelper::SetCpuThrottleMax(DWORD acPct, DWORD dcPct) {
+	acPct = max((DWORD)25, min((DWORD)100, acPct));
+	dcPct = max((DWORD)25, min((DWORD)100, dcPct));
+	fan_conf->cpuMaxAc = acPct;
+	fan_conf->cpuMaxDc = dcPct;
+	GUID* activeScheme = NULL;
+	if (PowerGetActiveScheme(NULL, &activeScheme) == ERROR_SUCCESS && activeScheme) {
+		PowerWriteACValueIndex(NULL, activeScheme, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &GUID_PROCESSOR_THROTTLE_MAXIMUM, acPct);
+		PowerWriteDCValueIndex(NULL, activeScheme, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &GUID_PROCESSOR_THROTTLE_MAXIMUM, dcPct);
+		PowerSetActiveScheme(NULL, activeScheme);
+		LocalFree(activeScheme);
+	}
+}
+
+void MonHelper::ReadCpuSettings(DWORD& acBoost, DWORD& dcBoost, DWORD& acMaxPct, DWORD& dcMaxPct) {
+	acBoost = fan_conf ? fan_conf->lastProf->acMode : 2;
+	dcBoost = fan_conf ? fan_conf->lastProf->dcMode : 2;
+	acMaxPct = fan_conf ? fan_conf->cpuMaxAc : 100;
+	dcMaxPct = fan_conf ? fan_conf->cpuMaxDc : 100;
+	GUID* activeScheme = NULL;
+	if (PowerGetActiveScheme(NULL, &activeScheme) == ERROR_SUCCESS && activeScheme) {
+		DWORD val = 0;
+		if (PowerReadACValueIndex(NULL, activeScheme, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &perfset, &val) == ERROR_SUCCESS && val <= 6) {
+			acBoost = val;
+		}
+		if (PowerReadDCValueIndex(NULL, activeScheme, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &perfset, &val) == ERROR_SUCCESS && val <= 6) {
+			dcBoost = val;
+		}
+		if (PowerReadACValueIndex(NULL, activeScheme, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &GUID_PROCESSOR_THROTTLE_MAXIMUM, &val) == ERROR_SUCCESS && val <= 100) {
+			acMaxPct = val;
+		}
+		if (PowerReadDCValueIndex(NULL, activeScheme, &GUID_PROCESSOR_SETTINGS_SUBGROUP, &GUID_PROCESSOR_THROTTLE_MAXIMUM, &val) == ERROR_SUCCESS && val <= 100) {
+			dcMaxPct = val;
+		}
+		LocalFree(activeScheme);
+	}
+}
+
+int MonHelper::FindPowerIndexByCodes(const vector<byte>& preferredCodes) const {
+	if (!acpi || !acpi->isSupported || acpi->powers.empty()) return -1;
+	for (byte code : preferredCodes) {
+		for (int i = 0; i < (int)acpi->powers.size(); ++i) {
+			if (acpi->powers[i] == code) return i;
+		}
+	}
+	return -1;
+}
+
+byte MonHelper::GetCurrentBiosCode() const {
+	if (!acpi || !acpi->isSupported) return 0;
+	if (fullSpeedManual || (powerSize > 0 && powerMode >= powerSize)) return 0xAB;
+	if (powerMode < acpi->powers.size()) return acpi->powers[powerMode];
+	int raw = acpi->GetPower(true);
+	return raw >= 0 ? (byte)raw : 0;
+}
+
+string MonHelper::GetBiosPowerModeName(byte code) {
+	switch (code) {
+	case 0x00: return "Custom / Manual";
+	case 0x96: return "Quiet";
+	case 0x97: return "Balanced";
+	case 0x98: return "Balanced Performance";
+	case 0x99: return "Performance";
+	case 0xA0: return "Balanced";
+	case 0xA1: return "Balanced Performance";
+	case 0xA2: return "Cool";
+	case 0xA3: return "Quiet";
+	case 0xA4: return "Performance";
+	case 0xA5: return "Battery Saver";
+	case 0xAB: return "Overdrive (G-Mode)";
+	default: {
+		char buf[32]{};
+		snprintf(buf, sizeof(buf), "BIOS Mode 0x%02X", code);
+		return buf;
+	}
 	}
 }
 

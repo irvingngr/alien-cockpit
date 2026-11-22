@@ -53,6 +53,17 @@ void ConfigFan::Load() {
 	GetReg("DiskSensors", &diskSensors, 1);
 	GetReg("NumLockActive", &numlockActive, 1);
 	GetReg("CPUModes", &prof.cpuModes);
+	GetReg("CpuMaxAC", &cpuMaxAc, 100);
+	GetReg("CpuMaxDC", &cpuMaxDc, 100);
+	{
+		char profBuf[64]{};
+		DWORD profLen = sizeof(profBuf);
+		if (RegGetValueA(keyMain, NULL, "PerfProfile", RRF_RT_REG_SZ, NULL, profBuf, &profLen) == ERROR_SUCCESS && profBuf[0] != '\0') {
+			activePerfProfile = profBuf;
+		} else {
+			activePerfProfile = "balanced";
+		}
+	}
 	//GetReg("InstantUpdate", &instantUpdate);
 
 	// Now load sensor mappings...
@@ -111,6 +122,9 @@ void ConfigFan::Save() {
 	SetReg("DiskSensors", diskSensors);
 	SetReg("NumLockActive", numlockActive);
 	SetReg("CPUModes", prof.cpuModes);
+	SetReg("CpuMaxAC", cpuMaxAc);
+	SetReg("CpuMaxDC", cpuMaxDc);
+	RegSetValueExA(keyMain, "PerfProfile", 0, REG_SZ, (const BYTE*)activePerfProfile.c_str(), (DWORD)activePerfProfile.size() + 1);
 	//SetReg("InstantUpdate", instantUpdate);
 
 	// clean old data

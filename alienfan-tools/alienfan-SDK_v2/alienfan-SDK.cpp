@@ -180,8 +180,16 @@ namespace AlienFan_SDK {
 
 #endif
 							if (isTcc = SUCCEEDED(m_AWCCGetObj->GetMethod(commandList[6], NULL, nullptr, nullptr))) {
-								maxTCC = CallWMIMethod(getMaxTCC);
-								maxOffset = CallWMIMethod(getMaxOffset);
+								int mt = CallWMIMethod(getMaxTCC);
+								int mo = CallWMIMethod(getMaxOffset);
+								if (mt > 50 && mt <= 120 && mo > 0 && mo <= 50) {
+									maxTCC = (byte)mt;
+									maxOffset = (byte)mo;
+								} else {
+									isTcc = false;
+									maxTCC = 100;
+									maxOffset = 0;
+								}
 							}
 #ifdef _TRACE_
 							if (isTcc)
@@ -322,7 +330,8 @@ namespace AlienFan_SDK {
 	int Control::GetGMode() {
 		if (isGmode) {
 			int pm = GetPower(true);
-			return pm == 0xab || pm < 0 /*|| CallWMIMethod(getGMode) > 0*/;
+			if (pm == 0xab) return 1;
+			return CallWMIMethod(getGMode) == 1 ? 1 : 0;
 		}
 		return 0;
 	}
@@ -331,16 +340,17 @@ namespace AlienFan_SDK {
 	{
 		if (isTcc) {
 			int curOffset = CallWMIMethod(getCurrentOffset);
-			return maxTCC - curOffset;
+			if (curOffset >= 0 && curOffset <= maxOffset) {
+				return maxTCC - curOffset;
+			}
 		}
 		return -1;
 	}
 
 	int Control::SetTCC(byte tccValue)
 	{
-		if (isTcc) {
-			if (maxTCC - tccValue <= maxOffset)
-				return CallWMIMethod(setOffset, maxTCC - tccValue);
+		if (isTcc && tccValue <= maxTCC && (maxTCC - tccValue) <= maxOffset) {
+			return CallWMIMethod(setOffset, maxTCC - tccValue);
 		}
 		return -1;
 	}

@@ -74,6 +74,12 @@
           </span>
           <span class="nav-text">Lighting Studio</span>
         </button>
+        <button class="nav-item" data-tab="performance">
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/><circle cx="12" cy="14" r="2"/></svg>
+          </span>
+          <span class="nav-text">Performance</span>
+        </button>
         <button class="nav-item" data-tab="thermals">
           <span class="nav-icon" aria-hidden="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12c0-3 2.5-5 5-5 2 0 3 1.2 3 2.5 0 2.5-3 2.5-8 2.5Z"/><path d="M12 12c3 0 5 2.5 5 5 0 2-1.2 3-2.5 3-2.5 0-2.5-3-2.5-8Z"/><path d="M12 12c0 3-2.5 5-5 5-2 0-3-1.2-3-2.5 0-2.5 3-2.5 8-2.5Z"/><path d="M12 12c-3 0-5-2.5-5-5 0-2 1.2-3 2.5-3 2.5 0 2.5 3 2.5 8Z"/><circle cx="12" cy="12" r="2"/></svg>
@@ -94,7 +100,7 @@
         </button>
         <button class="nav-item" data-tab="settings">
           <span class="nav-icon" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
           </span>
           <span class="nav-text">System &amp; Boot</span>
         </button>
@@ -102,7 +108,7 @@
         <div class="nav-footer">
           <div class="status-badge" id="backend-status">
             <span class="status-dot"></span>
-            <span id="backend-status-text">v1.0.16</span>
+            <span id="backend-status-text">v1.0.17</span>
           </div>
         </div>
       </nav>
@@ -473,7 +479,251 @@
           </div>
         </section>
 
-        <!-- TAB 2: THERMALS & FANS -->
+        <!-- TAB 2: PERFORMANCE | SYSTEM (AWCC-STYLE) -->
+        <section class="tab-panel" id="tab-performance">
+          <div class="panel-header perf-header">
+            <div>
+              <h2>Performance <span class="perf-sep">|</span> <span class="accent">System</span></h2>
+              <p class="subtitle" id="perf-profile-desc">Real-time CPU, GPU, RAM, storage telemetry, BIOS thermal modes, CPU boost &amp; TCC/XMP controls.</p>
+            </div>
+            <div class="perf-header-right">
+              <div class="perf-bios-pill" id="perf-bios-pill" title="Active ACPI BIOS WMI Thermal Profile">
+                <span class="bios-dot"></span>
+                <span id="perf-bios-label">BIOS: Detecting…</span>
+              </div>
+              <div class="unit-toggle" role="group" aria-label="Temperature Unit">
+                <button type="button" class="unit-btn active" data-unit="C">°C</button>
+                <button type="button" class="unit-btn" data-unit="F">°F</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- AWCC 6-Profile Preset Selector -->
+          <div class="perf-profile-bar" id="perf-profile-bar">
+            <button type="button" class="perf-profile-btn" data-perf="battery" title="BIOS Battery Saver (0xA5) + CPU Boost Off + 80% DC cap">Battery</button>
+            <button type="button" class="perf-profile-btn" data-perf="quiet" title="BIOS Quiet (0xA3) + Efficient AC / Off DC Boost">Quiet</button>
+            <button type="button" class="perf-profile-btn active" data-perf="balanced" title="BIOS Balanced (0xA0) + Efficient Aggressive AC / Efficient DC">Balanced</button>
+            <button type="button" class="perf-profile-btn" data-perf="performance" title="BIOS Performance (0xA4/0xA1) + Aggressive CPU Boost">Performance</button>
+            <button type="button" class="perf-profile-btn perf-overdrive" data-perf="overdrive" title="G-Mode / Overdrive (0xAB) + Max Fans + Aggressive Boost + Full TCC">Overdrive</button>
+            <button type="button" class="perf-profile-btn perf-custom" data-perf="custom" title="Manual BIOS Unlock (0x00) + Custom CPU Boost, TCC, XMP &amp; Fan Curves">Custom</button>
+          </div>
+
+          <div class="perf-admin-banner" id="perf-admin-banner" style="display:none;">
+            <span>Administrator privileges are required to control ACPI BIOS thermal profiles, G-Mode, TCC, and XMP.</span>
+            <button type="button" class="btn-secondary" onclick="restartAsAdmin()">Relaunch as Administrator</button>
+          </div>
+
+          <!-- 4-Card AWCC Telemetry & Tuning Grid -->
+          <div class="perf-grid">
+            <!-- CARD 1: CPU -->
+            <div class="perf-card" id="perf-card-cpu">
+              <div class="perf-card-tabs">
+                <button type="button" class="perf-subtab active" data-card="cpu" data-view="overview">CPU Overview</button>
+                <button type="button" class="perf-subtab" data-card="cpu" data-view="advanced">Advanced View</button>
+              </div>
+              <div class="perf-card-body active" data-card-body="cpu-overview">
+                <div class="perf-gauge-wrap">
+                  <svg class="perf-gauge-svg" viewBox="0 0 180 150" aria-hidden="true">
+                    <path class="gauge-track" d="M 32 126 A 68 68 0 1 1 148 126" />
+                    <path class="gauge-arc gauge-cyan" id="gauge-arc-cpu" d="M 32 126 A 68 68 0 1 1 148 126" />
+                  </svg>
+                  <div class="perf-gauge-center">
+                    <span class="gauge-val" id="perf-cpu-pct">0</span>
+                    <span class="gauge-unit">%</span>
+                  </div>
+                  <div class="gauge-caption">
+                    <strong class="accent">CPU</strong>
+                    <span id="perf-cpu-sub">Utilization</span>
+                  </div>
+                </div>
+                <div class="perf-hw-model" id="perf-cpu-model">Detecting processor…</div>
+                <div class="perf-metrics-table">
+                  <div class="pm-row"><span>Temp</span><strong id="perf-cpu-temp">--°C</strong></div>
+                  <div class="pm-row"><span>Clock</span><strong id="perf-cpu-clock">-- GHz</strong></div>
+                  <div class="pm-row"><span id="perf-cpu-pwr-lbl">Power</span><strong id="perf-cpu-power">--</strong></div>
+                  <div class="pm-row"><span>Fan (RPM)</span><strong id="perf-cpu-fan">-- RPM</strong></div>
+                </div>
+              </div>
+              <div class="perf-card-body perf-adv-panel" data-card-body="cpu-advanced">
+                <div class="perf-adv-field">
+                  <label for="perf-boost-ac">CPU Boost Mode (Plugged In / AC)</label>
+                  <select id="perf-boost-ac" class="probe-dev-select perf-select">
+                    <option value="0">Off (Disabled)</option>
+                    <option value="1">Enabled</option>
+                    <option value="2">Aggressive</option>
+                    <option value="3">Efficient Enabled</option>
+                    <option value="4">Efficient Aggressive</option>
+                  </select>
+                </div>
+                <div class="perf-adv-field">
+                  <label for="perf-boost-dc">CPU Boost Mode (On Battery / DC)</label>
+                  <select id="perf-boost-dc" class="probe-dev-select perf-select">
+                    <option value="0">Off (Disabled)</option>
+                    <option value="1">Enabled</option>
+                    <option value="2">Aggressive</option>
+                    <option value="3">Efficient Enabled</option>
+                    <option value="4">Efficient Aggressive</option>
+                  </select>
+                </div>
+                <div class="perf-adv-field">
+                  <div class="perf-adv-head">
+                    <label for="perf-max-ac">Max CPU State (AC)</label>
+                    <strong id="perf-max-ac-val">100%</strong>
+                  </div>
+                  <input type="range" id="perf-max-ac" min="25" max="100" step="5" value="100" />
+                </div>
+                <div class="perf-adv-field">
+                  <div class="perf-adv-head">
+                    <label for="perf-max-dc">Max CPU State (Battery)</label>
+                    <strong id="perf-max-dc-val">100%</strong>
+                  </div>
+                  <input type="range" id="perf-max-dc" min="25" max="100" step="5" value="100" />
+                </div>
+                <div class="perf-adv-field" id="perf-tcc-wrap">
+                  <div class="perf-adv-head">
+                    <label for="perf-tcc-slider">TCC Thermal Limit</label>
+                    <strong id="perf-tcc-val">100°C</strong>
+                  </div>
+                  <input type="range" id="perf-tcc-slider" min="85" max="100" step="1" value="100" />
+                  <span class="hint-text" id="perf-tcc-note">Caps max CPU temperature before throttling</span>
+                </div>
+                <button type="button" class="btn-primary full-width perf-apply-btn" id="btn-apply-cpu-tuning">Apply CPU Tuning</button>
+              </div>
+            </div>
+
+            <!-- CARD 2: GPU -->
+            <div class="perf-card" id="perf-card-gpu">
+              <div class="perf-card-tabs">
+                <button type="button" class="perf-subtab active" data-card="gpu" data-view="overview">GPU Overview</button>
+                <button type="button" class="perf-subtab" data-card="gpu" data-view="advanced">Advanced View</button>
+              </div>
+              <div class="perf-card-body active" data-card-body="gpu-overview">
+                <div class="perf-gauge-wrap">
+                  <svg class="perf-gauge-svg" viewBox="0 0 180 150" aria-hidden="true">
+                    <path class="gauge-track" d="M 32 126 A 68 68 0 1 1 148 126" />
+                    <path class="gauge-arc gauge-emerald" id="gauge-arc-gpu" d="M 32 126 A 68 68 0 1 1 148 126" />
+                  </svg>
+                  <div class="perf-gauge-center">
+                    <span class="gauge-val" id="perf-gpu-pct">0</span>
+                    <span class="gauge-unit">%</span>
+                  </div>
+                  <div class="gauge-caption">
+                    <strong class="accent">GPU</strong>
+                    <span>Utilization</span>
+                  </div>
+                </div>
+                <div class="perf-hw-model" id="perf-gpu-model">Detecting GPU…</div>
+                <div class="perf-metrics-table">
+                  <div class="pm-row"><span>Temp</span><strong id="perf-gpu-temp">--°C</strong></div>
+                  <div class="pm-row"><span>Power (W)</span><strong id="perf-gpu-power">--</strong></div>
+                  <div class="pm-row"><span>Core Clock</span><strong id="perf-gpu-clock">-- MHz</strong></div>
+                  <div class="pm-row"><span>Fan (RPM)</span><strong id="perf-gpu-fan">-- RPM</strong></div>
+                </div>
+              </div>
+              <div class="perf-card-body perf-adv-panel" data-card-body="gpu-advanced">
+                <div class="perf-metrics-table">
+                  <div class="pm-row"><span>VRAM Used</span><strong id="perf-gpu-vram-used">-- GB</strong></div>
+                  <div class="pm-row"><span>VRAM Total</span><strong id="perf-gpu-vram-total">-- GB</strong></div>
+                  <div class="pm-row"><span>Memory Clock</span><strong id="perf-gpu-mclk">-- MHz</strong></div>
+                  <div class="pm-row"><span>Power Limit</span><strong id="perf-gpu-plim">-- W</strong></div>
+                  <div class="pm-row"><span>Telemetry API</span><strong id="perf-gpu-src">--</strong></div>
+                </div>
+                <p class="hint-text" style="margin-top:8px;">GPU power envelope and fan speed scale dynamically with the active AWCC BIOS thermal profile (Performance / Overdrive G-Mode).</p>
+              </div>
+            </div>
+
+            <!-- CARD 3: MEMORY -->
+            <div class="perf-card" id="perf-card-mem">
+              <div class="perf-card-tabs">
+                <button type="button" class="perf-subtab active" data-card="mem" data-view="overview">Memory Overview</button>
+                <button type="button" class="perf-subtab" data-card="mem" data-view="advanced">XMP Profile</button>
+              </div>
+              <div class="perf-card-body active" data-card-body="mem-overview">
+                <div class="perf-gauge-wrap">
+                  <svg class="perf-gauge-svg" viewBox="0 0 180 150" aria-hidden="true">
+                    <path class="gauge-track" d="M 32 126 A 68 68 0 1 1 148 126" />
+                    <path class="gauge-arc gauge-cyan" id="gauge-arc-mem" d="M 32 126 A 68 68 0 1 1 148 126" />
+                  </svg>
+                  <div class="perf-gauge-center">
+                    <span class="gauge-val" id="perf-mem-used">0</span>
+                    <span class="gauge-unit">GB</span>
+                  </div>
+                  <div class="gauge-caption">
+                    <strong class="accent">Memory</strong>
+                    <span id="perf-mem-speed">System RAM</span>
+                  </div>
+                </div>
+                <div class="perf-hw-model" id="perf-mem-total">-- GB Total</div>
+                <div class="perf-metrics-table">
+                  <div class="pm-row"><span>In Use (GB)</span><strong id="perf-mem-inuse">--</strong></div>
+                  <div class="pm-row"><span>Available (GB)</span><strong id="perf-mem-avail">--</strong></div>
+                  <div class="pm-row"><span>Cached (GB)</span><strong id="perf-mem-cached">--</strong></div>
+                  <div class="pm-row"><span>Wired (GB)</span><strong id="perf-mem-wired">--</strong></div>
+                </div>
+              </div>
+              <div class="perf-card-body perf-adv-panel" data-card-body="mem-advanced">
+                <div class="perf-adv-field">
+                  <label for="perf-xmp-select">BIOS Memory XMP Profile</label>
+                  <select id="perf-xmp-select" class="probe-dev-select perf-select">
+                    <option value="0">Default (XMP Off)</option>
+                    <option value="1">XMP Profile 1</option>
+                    <option value="2">XMP Profile 2</option>
+                  </select>
+                </div>
+                <p class="hint-text" id="perf-xmp-note">Checking BIOS MemoryOCControl support…</p>
+                <div class="perf-metrics-table" style="margin-top:6px;">
+                  <div class="pm-row"><span>Configured Speed</span><strong id="perf-mem-speed-adv">--</strong></div>
+                  <div class="pm-row"><span>Committed (GB)</span><strong id="perf-mem-commit">--</strong></div>
+                </div>
+                <button type="button" class="btn-primary full-width perf-apply-btn" id="btn-apply-xmp">Apply XMP Profile</button>
+              </div>
+            </div>
+
+            <!-- CARD 4: C: DRIVE -->
+            <div class="perf-card" id="perf-card-disk">
+              <div class="perf-card-header-static">C: Drive Storage</div>
+              <div class="perf-card-body active">
+                <div class="perf-gauge-wrap">
+                  <svg class="perf-gauge-svg" viewBox="0 0 180 150" aria-hidden="true">
+                    <path class="gauge-track" d="M 32 126 A 68 68 0 1 1 148 126" />
+                    <path class="gauge-arc gauge-violet" id="gauge-arc-disk" d="M 32 126 A 68 68 0 1 1 148 126" />
+                  </svg>
+                  <div class="perf-gauge-center">
+                    <span class="gauge-val" id="perf-disk-used">0</span>
+                    <span class="gauge-unit">GB</span>
+                  </div>
+                  <div class="gauge-caption">
+                    <strong class="accent">C Drive</strong>
+                    <span id="perf-disk-sub">Disk Space</span>
+                  </div>
+                </div>
+                <div class="perf-hw-model" id="perf-disk-total">-- GB Free / -- GB Total</div>
+                <div class="perf-metrics-table">
+                  <div class="pm-row"><span>Active Time%</span><strong id="perf-disk-active">0%</strong></div>
+                  <div class="pm-row"><span>Response (ms)</span><strong id="perf-disk-resp">0.0</strong></div>
+                  <div class="pm-row"><span>Read Speed</span><strong id="perf-disk-read">0 KB/s</strong></div>
+                  <div class="pm-row"><span>Write Speed</span><strong id="perf-disk-write">0 KB/s</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom BIOS Thermal Modes & Quick Actions Bar -->
+          <div class="card perf-bottom-card">
+            <div class="perf-bottom-left">
+              <span class="perf-bottom-label">HARDWARE BIOS THERMAL MODES</span>
+              <div class="perf-bios-chips" id="perf-bios-chips">
+                <span class="hint-text">Scanning WMI thermal modes…</span>
+              </div>
+            </div>
+            <div class="perf-bottom-actions">
+              <button type="button" class="qs-btn" id="btn-perf-open-fans">Fan Curves &rarr;</button>
+              <button type="button" class="btn-secondary" id="btn-perf-reset">Reset Balanced</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 3: THERMALS & FANS -->
         <section class="tab-panel" id="tab-thermals">
           <div class="panel-header">
             <div>
@@ -481,11 +731,12 @@
               <p class="subtitle">ACPI BIOS fan curves, temperature sensors, and performance power modes.</p>
             </div>
             <div class="power-mode-bar" id="power-mode-bar">
-              <button class="seg-btn" data-pm="auto" id="btn-fan-auto" title="Automatic temperature-based fan curve">Auto</button>
-              <button class="seg-btn active" data-pm="0">Quiet</button>
-              <button class="seg-btn" data-pm="1">Balanced</button>
-              <button class="seg-btn" data-pm="2">Performance</button>
-              <button class="seg-btn" data-pm="3">Full Speed</button>
+              <button class="seg-btn" data-pm="auto" id="btn-fan-auto" title="Automatic temperature-based fan curve (Custom)">Auto Curve</button>
+              <button class="seg-btn" data-pm="battery">Battery</button>
+              <button class="seg-btn" data-pm="quiet">Quiet</button>
+              <button class="seg-btn active" data-pm="balanced">Balanced</button>
+              <button class="seg-btn" data-pm="performance">Performance</button>
+              <button class="seg-btn" data-pm="overdrive">Overdrive</button>
             </div>
           </div>
 
@@ -677,7 +928,7 @@
             <img src="assets/cockpit.png" alt="AlienCockpit Logo" class="about-logo" />
             <div class="about-info">
               <div class="about-title-row">
-                <h3>AlienCockpit v1.0.16 — AWCC Alternative</h3>
+                <h3>AlienCockpit v1.0.17 — AWCC Alternative</h3>
                 <span class="about-model-badge">Optimized for Alienware 18 &amp; 16 Area-51 (AA18250)</span>
               </div>
               <p>Built on the stability of the open-source AlienFX-SDK &amp; AlienFan-SDK engine, redesigned from the ground up with ultra-low resource usage and an intuitive cockpit interface for Windows 11.</p>

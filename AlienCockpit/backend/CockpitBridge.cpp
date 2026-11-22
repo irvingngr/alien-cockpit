@@ -4,6 +4,7 @@
 #include "EventHandler.h"
 #include "SysMonHelper.h"
 #include "BatteryMonitor.h"
+#include "PerformanceMonitor.h"
 #include "StartupManager.h"
 #include "MonHelper.h"
 #include "ConfigFan.h"
@@ -216,11 +217,35 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
         mon->GetTelemetrySnapshot(senSnap, maxSnap, fanSnap);
     }
 
+    std::vector<std::pair<WORD, std::string>> sensorNamePairs;
+    std::vector<std::pair<BYTE, BYTE>> fanTypePairs;
+    if (mon && mon->acpi) {
+        for (const auto& asen : mon->acpi->sensors) {
+            std::string nm = (fan_conf && fan_conf->sensors.count(asen.sid) && !fan_conf->sensors[asen.sid].empty())
+                ? fan_conf->sensors[asen.sid]
+                : asen.name;
+            sensorNamePairs.push_back({ asen.sid, nm });
+        }
+        for (size_t fi = 0; fi < mon->acpi->fans.size(); ++fi) {
+            fanTypePairs.push_back({ static_cast<BYTE>(fi), mon->acpi->fans[fi].type });
+        }
+    }
+
+    PerformanceSnapshot perf = PerformanceMonitor::Sample(
+        cpuPct, senSnap, fanSnap, sensorNamePairs, fanTypePairs);
+
+    auto safeD = [](double v, double def = 0.0) -> double {
+        return std::isfinite(v) ? v : def;
+    };
+
     int liveTemp = 0;
     for (const auto& kv : senSnap) {
         if (kv.second > liveTemp && kv.second < 130) {
             liveTemp = static_cast<int>(kv.second);
         }
+    }
+    if (liveTemp == 0 && perf.cpuTempC > 0) {
+        liveTemp = perf.cpuTempC;
     }
     if (liveTemp == 0 && fxhl && fxhl->eData.Temp > 0) {
         liveTemp = static_cast<int>(fxhl->eData.Temp);
@@ -228,9 +253,9 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
 
     SimpleJson::Value sys = SimpleJson::Value::Object();
     sys["cpu"] = cpuPct;
-    sys["ram"] = fxhl ? static_cast<int>(fxhl->eData.RAM) : 0;
-    sys["gpu"] = fxhl ? static_cast<int>(fxhl->eData.GPU) : 0;
-    sys["hdd"] = fxhl ? static_cast<int>(fxhl->eData.HDD) : 0;
+    sys["ram"] = perf.memPct;
+    sys["gpu"] = perf.gpuUtilPct;
+    sys["hdd"] = perf.diskActivePct;
     sys["net"] = fxhl ? static_cast<int>(fxhl->eData.NET) : 0;
     sys["temp"] = liveTemp;
     sys["batt"] = sysBatt;
@@ -274,24 +299,38 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
     SimpleJson::Value fanData = SimpleJson::Value::Object();
     fanData["available"] = (acpiReady && (mon->fansize > 0 || mon->sensorSize > 0 || mon->powerSize > 0));
     fanData["isAdmin"] = (IsUserAnAdmin() != FALSE);
+    bool hasActiveCurve = false;
+    if (fan_conf && fan_conf->lastProf) {
+        for (const auto& fkv : fan_conf->lastProf->fanControls) {
+            for (const auto& skv : fkv.second) {
+                if (skv.second.active) {
+                    hasActiveCurve = true;
+                    break;
+                }
+            }
+            if (hasActiveCurve) break;
+        }
+    }
+
+    byte curBiosCode = mon ? mon->GetCurrentBiosCode() : 0;
+    std::string activePerfProfile = fan_conf ? fan_conf->activePerfProfile : "balanced";
+    if (mon && acpiReady) {
+        if (mon->fullSpeedManual || curBiosCode == 0xAB) {
+            activePerfProfile = "overdrive";
+        } else if (curBiosCode == 0x00 && hasActiveCurve && activePerfProfile != "custom") {
+            activePerfProfile = "custom";
+        }
+    }
+
     if (mon) {
         int uiPowerMode = (mon->fullSpeedManual || (mon->powerSize > 0 && mon->powerMode >= mon->powerSize))
             ? 3
             : static_cast<int>(mon->powerMode);
-        bool hasActiveCurve = false;
-        if (fan_conf && fan_conf->lastProf) {
-            for (const auto& fkv : fan_conf->lastProf->fanControls) {
-                for (const auto& skv : fkv.second) {
-                    if (skv.second.active) {
-                        hasActiveCurve = true;
-                        break;
-                    }
-                }
-                if (hasActiveCurve) break;
-            }
-        }
         fanData["powerMode"] = uiPowerMode;
         fanData["fanAuto"] = (uiPowerMode == 0 && !mon->fullSpeedManual && hasActiveCurve);
+        fanData["perfProfile"] = activePerfProfile;
+        fanData["biosCode"] = static_cast<int>(curBiosCode);
+        fanData["biosName"] = MonHelper::GetBiosPowerModeName(curBiosCode);
         SimpleJson::Value sensors = SimpleJson::Value::Array();
         for (const auto& kv : senSnap) {
             SimpleJson::Value s = SimpleJson::Value::Object();
@@ -323,6 +362,123 @@ void CockpitBridge::RefreshTelemetryCache(bool scanBatteries) {
         fanData["fans"] = fans;
     }
     root["thermals"] = fanData;
+
+    // Performance | System (AWCC-style telemetry & tuning state)
+    SimpleJson::Value perfJson = SimpleJson::Value::Object();
+    perfJson["available"] = acpiReady;
+    perfJson["isAdmin"] = (IsUserAnAdmin() != FALSE);
+    perfJson["acOnline"] = acOnline;
+    perfJson["profile"] = activePerfProfile;
+    perfJson["biosCode"] = static_cast<int>(curBiosCode);
+    perfJson["biosName"] = MonHelper::GetBiosPowerModeName(curBiosCode);
+    perfJson["gmodeSupported"] = (acpiReady && mon->acpi->isGmode);
+    perfJson["fanAuto"] = (mon && mon->powerMode == 0 && !mon->fullSpeedManual && hasActiveCurve);
+
+    SimpleJson::Value biosModes = SimpleJson::Value::Array();
+    if (acpiReady && mon->acpi) {
+        for (size_t i = 0; i < mon->acpi->powers.size(); ++i) {
+            byte code = mon->acpi->powers[i];
+            SimpleJson::Value bm = SimpleJson::Value::Object();
+            bm["index"] = static_cast<int>(i);
+            bm["code"] = static_cast<int>(code);
+            char hbuf[16]{};
+            snprintf(hbuf, sizeof(hbuf), "0x%02X", code);
+            bm["hex"] = std::string(hbuf);
+            bm["name"] = MonHelper::GetBiosPowerModeName(code);
+            bm["active"] = (!mon->fullSpeedManual && mon->powerMode == i);
+            biosModes.push(bm);
+        }
+        if (mon->acpi->isGmode) {
+            SimpleJson::Value bm = SimpleJson::Value::Object();
+            bm["index"] = static_cast<int>(mon->acpi->powers.size());
+            bm["code"] = 0xAB;
+            bm["hex"] = "0xAB";
+            bm["name"] = "Overdrive (G-Mode)";
+            bm["active"] = (mon->fullSpeedManual || mon->powerMode >= mon->powerSize);
+            biosModes.push(bm);
+        }
+    }
+    perfJson["biosModes"] = biosModes;
+
+    DWORD acBoost = 2, dcBoost = 2, acMaxPct = 100, dcMaxPct = 100;
+    if (mon) {
+        mon->ReadCpuSettings(acBoost, dcBoost, acMaxPct, dcMaxPct);
+    }
+
+    bool tccSupported = (acpiReady && mon->acpi->isTcc && mon->acpi->maxTCC > 50 && mon->acpi->maxOffset > 0);
+    int tccMax = tccSupported ? static_cast<int>(mon->acpi->maxTCC) : 100;
+    int tccMin = tccSupported ? std::max<int>(50, tccMax - static_cast<int>(mon->acpi->maxOffset)) : 85;
+    int tccCur = tccSupported ? mon->acpi->GetTCC() : -1;
+    if (tccCur < tccMin || tccCur > tccMax) {
+        tccCur = (fan_conf && fan_conf->lastProf && fan_conf->lastProf->currentTCC >= tccMin && fan_conf->lastProf->currentTCC <= tccMax)
+            ? static_cast<int>(fan_conf->lastProf->currentTCC)
+            : tccMax;
+    }
+
+    SimpleJson::Value cpuJ = SimpleJson::Value::Object();
+    cpuJ["name"] = perf.cpuName;
+    cpuJ["cores"] = perf.cpuLogicalCores;
+    cpuJ["util"] = perf.cpuUtilPct;
+    cpuJ["baseGhz"] = safeD(perf.cpuBaseGhz);
+    cpuJ["currentGhz"] = safeD(perf.cpuCurrentGhz);
+    cpuJ["powerW"] = safeD(perf.cpuPowerW, -1.0);
+    cpuJ["voltageV"] = safeD(perf.cpuVoltageV, -1.0);
+    cpuJ["temp"] = perf.cpuTempC;
+    cpuJ["fanRpm"] = perf.cpuFanRpm;
+    cpuJ["boostAc"] = static_cast<int>(acBoost);
+    cpuJ["boostDc"] = static_cast<int>(dcBoost);
+    cpuJ["maxAc"] = static_cast<int>(acMaxPct);
+    cpuJ["maxDc"] = static_cast<int>(dcMaxPct);
+    cpuJ["tccSupported"] = tccSupported;
+    cpuJ["tccCurrent"] = tccCur;
+    cpuJ["tccMin"] = tccMin;
+    cpuJ["tccMax"] = tccMax;
+    perfJson["cpu"] = cpuJ;
+
+    SimpleJson::Value gpuJ = SimpleJson::Value::Object();
+    gpuJ["name"] = perf.gpuName;
+    gpuJ["source"] = perf.gpuSource;
+    gpuJ["util"] = perf.gpuUtilPct;
+    gpuJ["temp"] = perf.gpuTempC;
+    gpuJ["powerW"] = safeD(perf.gpuPowerW, -1.0);
+    gpuJ["powerLimitW"] = safeD(perf.gpuPowerLimitW, -1.0);
+    gpuJ["clockMhz"] = perf.gpuClockMhz;
+    gpuJ["memClockMhz"] = perf.gpuMemClockMhz;
+    gpuJ["vramUsedGb"] = safeD(perf.gpuVramUsedGb, -1.0);
+    gpuJ["vramTotalGb"] = safeD(perf.gpuVramTotalGb, -1.0);
+    gpuJ["fanRpm"] = perf.gpuFanRpm;
+    perfJson["gpu"] = gpuJ;
+
+    int xmpCur = (acpiReady && mon->acpi->isXMP) ? mon->acpi->GetXMP() : -1;
+    bool xmpSupported = (acpiReady && mon->acpi->isXMP && xmpCur >= 0);
+    SimpleJson::Value memJ = SimpleJson::Value::Object();
+    memJ["totalGb"] = safeD(perf.memTotalGb);
+    memJ["usedGb"] = safeD(perf.memUsedGb);
+    memJ["availGb"] = safeD(perf.memAvailGb);
+    memJ["cachedGb"] = safeD(perf.memCachedGb);
+    memJ["wiredGb"] = safeD(perf.memWiredGb);
+    memJ["commitGb"] = safeD(perf.memCommitGb);
+    memJ["pct"] = perf.memPct;
+    memJ["speedMhz"] = perf.memSpeedMhz;
+    memJ["type"] = perf.memType;
+    memJ["xmpSupported"] = xmpSupported;
+    memJ["xmpWmiPresent"] = (acpiReady && mon->acpi->isXMP);
+    memJ["xmpProfile"] = (xmpCur >= 0) ? xmpCur : (fan_conf && fan_conf->lastProf ? static_cast<int>(fan_conf->lastProf->memoryXMP) : 0);
+    perfJson["memory"] = memJ;
+
+    SimpleJson::Value diskJ = SimpleJson::Value::Object();
+    diskJ["totalGb"] = safeD(perf.diskTotalGb);
+    diskJ["usedGb"] = safeD(perf.diskUsedGb);
+    diskJ["freeGb"] = safeD(perf.diskFreeGb);
+    diskJ["usedPct"] = perf.diskUsedPct;
+    diskJ["activePct"] = perf.diskActivePct;
+    diskJ["responseMs"] = safeD(perf.diskResponseMs);
+    diskJ["readKbps"] = safeD(perf.diskReadKbps);
+    diskJ["writeKbps"] = safeD(perf.diskWriteKbps);
+    diskJ["temp"] = perf.diskTempC;
+    perfJson["disk"] = diskJ;
+
+    root["performance"] = perfJson;
 
     std::string serialized = root.dump();
     std::lock_guard<std::mutex> lock(g_telemetryMutex);
@@ -1071,9 +1227,22 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         wmi["isAlienware"] = (acpiReady && mon->acpi->isAlienware);
         wmi["isSupported"] = (acpiReady && mon->acpi->isSupported);
         wmi["isGmode"] = (acpiReady && mon->acpi->isGmode);
+        wmi["isTcc"] = (acpiReady && mon->acpi->isTcc);
+        wmi["maxTCC"] = (acpiReady && mon->acpi->isTcc) ? static_cast<int>(mon->acpi->maxTCC) : 0;
+        wmi["maxOffset"] = (acpiReady && mon->acpi->isTcc) ? static_cast<int>(mon->acpi->maxOffset) : 0;
+        wmi["isXMP"] = (acpiReady && mon->acpi->isXMP);
         wmi["fans"] = mon ? static_cast<int>(mon->fansize) : 0;
         wmi["sensors"] = mon ? static_cast<int>(mon->sensorSize) : 0;
         wmi["powerModes"] = mon ? static_cast<int>(mon->powerSize) : 0;
+        SimpleJson::Value pCodes = SimpleJson::Value::Array();
+        if (acpiReady) {
+            for (byte pc : mon->acpi->powers) {
+                char pb[64]{};
+                snprintf(pb, sizeof(pb), "0x%02X (%s)", pc, MonHelper::GetBiosPowerModeName(pc).c_str());
+                pCodes.push(std::string(pb));
+            }
+        }
+        wmi["powerCodes"] = pCodes;
         resp["wmi"] = wmi;
 
         SimpleJson::Value ctrls = SimpleJson::Value::Array();
@@ -1430,21 +1599,180 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
         return BuildFullStateJson();
     }
 
-    if (cmd == "setPowerMode" && mon && fan_conf) {
-        int rawMode = msg.get("mode").asInt(0);
-        if (rawMode >= 3) {
-            mon->SetFullSpeed();
-        } else {
-            if (rawMode == 0 && fan_conf->lastProf) {
-                for (auto& fkv : fan_conf->lastProf->fanControls) {
-                    for (auto& skv : fkv.second) {
-                        skv.second.active = false;
-                    }
+    auto disableFanCurves = [&]() {
+        if (fan_conf && fan_conf->lastProf) {
+            for (auto& fkv : fan_conf->lastProf->fanControls) {
+                for (auto& skv : fkv.second) {
+                    skv.second.active = false;
                 }
             }
-            mon->SetPowerMode(static_cast<byte>(std::clamp(rawMode, 0, 255)));
+        }
+    };
+
+    auto applyNamedPerfProfile = [&](const std::string& profileKey) {
+        if (!mon || !fan_conf || !fan_conf->lastProf) return;
+        std::string key = profileKey;
+        for (char& ch : key) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+
+        if (key == "battery") {
+            disableFanCurves();
+            int idx = mon->FindPowerIndexByCodes({ 0xA5, 0xA3, 0x96, 0xA2, 0xA0 });
+            if (idx >= 0) mon->SetPowerMode(static_cast<byte>(idx));
+            fan_conf->lastProf->acMode = 0; // Off
+            fan_conf->lastProf->dcMode = 0; // Off
+            mon->SetCpuModes();
+            mon->SetCpuThrottleMax(95, 80);
+            fan_conf->activePerfProfile = "battery";
+        } else if (key == "quiet") {
+            disableFanCurves();
+            int idx = mon->FindPowerIndexByCodes({ 0xA3, 0x96, 0xA2, 0xA5, 0xA0 });
+            if (idx >= 0) mon->SetPowerMode(static_cast<byte>(idx));
+            fan_conf->lastProf->acMode = 3; // Efficient
+            fan_conf->lastProf->dcMode = 0; // Off
+            mon->SetCpuModes();
+            mon->SetCpuThrottleMax(100, 90);
+            fan_conf->activePerfProfile = "quiet";
+        } else if (key == "balanced") {
+            disableFanCurves();
+            int idx = mon->FindPowerIndexByCodes({ 0xA0, 0x97, 0xA1, 0x98 });
+            if (idx < 0 && mon->powerSize > 1) idx = 1;
+            if (idx >= 0) mon->SetPowerMode(static_cast<byte>(idx));
+            fan_conf->lastProf->acMode = 4; // Efficient Aggressive
+            fan_conf->lastProf->dcMode = 3; // Efficient
+            mon->SetCpuModes();
+            mon->SetCpuThrottleMax(100, 100);
+            fan_conf->activePerfProfile = "balanced";
+        } else if (key == "performance") {
+            disableFanCurves();
+            int idx = mon->FindPowerIndexByCodes({ 0xA4, 0xA1, 0x99, 0x98, 0xA0 });
+            if (idx < 0 && mon->powerSize > 1) idx = mon->powerSize - 1;
+            if (idx >= 0) mon->SetPowerMode(static_cast<byte>(idx));
+            fan_conf->lastProf->acMode = 2; // Aggressive
+            fan_conf->lastProf->dcMode = 1; // Enabled
+            mon->SetCpuModes();
+            mon->SetCpuThrottleMax(100, 100);
+            fan_conf->activePerfProfile = "performance";
+        } else if (key == "overdrive") {
+            disableFanCurves();
+            mon->SetFullSpeed();
+            fan_conf->lastProf->acMode = 2; // Aggressive
+            fan_conf->lastProf->dcMode = 2; // Aggressive
+            mon->SetCpuModes();
+            mon->SetCpuThrottleMax(100, 100);
+            if (mon->acpi && mon->acpi->isTcc && mon->acpi->maxTCC > 50) {
+                fan_conf->lastProf->currentTCC = mon->acpi->maxTCC;
+                mon->SetOC(true);
+            }
+            fan_conf->activePerfProfile = "overdrive";
+        } else {
+            // Custom: unlock manual fan curve mode (0x00) and apply user's saved CPU/OC tuning
+            mon->SetPowerMode(0);
+            mon->SetCpuModes();
+            mon->SetCpuThrottleMax(fan_conf->cpuMaxAc, fan_conf->cpuMaxDc);
+            if (fan_conf->ocEnable) mon->SetOC(true);
+            fan_conf->activePerfProfile = "custom";
         }
         fan_conf->Save();
+    };
+
+    if (cmd == "applyPerformanceProfile" && mon && fan_conf) {
+        std::string profileKey = msg.get("profile").asString("balanced");
+        applyNamedPerfProfile(profileKey);
+        RefreshTelemetryCache(false);
+        return BuildTelemetryJson();
+    }
+
+    if (cmd == "resetPerformanceDefaults" && mon && fan_conf) {
+        if (mon->acpi && mon->acpi->isTcc && mon->acpi->maxTCC > 50) {
+            fan_conf->lastProf->currentTCC = mon->acpi->maxTCC;
+            mon->SetOC(true);
+        }
+        applyNamedPerfProfile("balanced");
+        RefreshTelemetryCache(false);
+        return BuildTelemetryJson();
+    }
+
+    if (cmd == "setBiosPowerMode" && mon && fan_conf) {
+        int idx = msg.has("index") ? msg.get("index").asInt(-1) : -1;
+        int code = msg.has("code") ? msg.get("code").asInt(-1) : -1;
+        if (code == 0xAB || (idx >= 0 && mon->powerSize > 0 && idx >= mon->powerSize)) {
+            disableFanCurves();
+            mon->SetFullSpeed();
+            fan_conf->activePerfProfile = "overdrive";
+        } else {
+            if (idx < 0 && code >= 0) {
+                idx = mon->FindPowerIndexByCodes({ static_cast<byte>(code) });
+            }
+            if (idx >= 0 && idx < mon->powerSize) {
+                byte targetCode = (mon->acpi && idx < static_cast<int>(mon->acpi->powers.size()))
+                    ? mon->acpi->powers[idx] : 0;
+                if (idx != 0) disableFanCurves();
+                mon->SetPowerMode(static_cast<byte>(idx));
+                switch (targetCode) {
+                case 0x00: fan_conf->activePerfProfile = "custom"; break;
+                case 0xA5: fan_conf->activePerfProfile = "battery"; break;
+                case 0xA3: case 0x96: case 0xA2: fan_conf->activePerfProfile = "quiet"; break;
+                case 0xA0: case 0x97: fan_conf->activePerfProfile = "balanced"; break;
+                case 0xA4: case 0xA1: case 0x99: case 0x98: fan_conf->activePerfProfile = "performance"; break;
+                default: fan_conf->activePerfProfile = "custom"; break;
+                }
+            }
+        }
+        fan_conf->Save();
+        RefreshTelemetryCache(false);
+        return BuildTelemetryJson();
+    }
+
+    if (cmd == "setCpuTuning" && mon && fan_conf && fan_conf->lastProf) {
+        if (msg.has("boostAc")) {
+            fan_conf->lastProf->acMode = static_cast<WORD>(std::clamp(msg.get("boostAc").asInt(2), 0, 4));
+        }
+        if (msg.has("boostDc")) {
+            fan_conf->lastProf->dcMode = static_cast<WORD>(std::clamp(msg.get("boostDc").asInt(2), 0, 4));
+        }
+        mon->SetCpuModes();
+
+        DWORD maxAc = msg.has("maxAc") ? static_cast<DWORD>(std::clamp(msg.get("maxAc").asInt(100), 25, 100)) : fan_conf->cpuMaxAc;
+        DWORD maxDc = msg.has("maxDc") ? static_cast<DWORD>(std::clamp(msg.get("maxDc").asInt(100), 25, 100)) : fan_conf->cpuMaxDc;
+        mon->SetCpuThrottleMax(maxAc, maxDc);
+
+        if (msg.has("tcc") && mon->acpi && mon->acpi->isTcc && mon->acpi->maxTCC > 50) {
+            int tMin = std::max<int>(50, static_cast<int>(mon->acpi->maxTCC) - static_cast<int>(mon->acpi->maxOffset));
+            int tMax = static_cast<int>(mon->acpi->maxTCC);
+            int tccVal = std::clamp(msg.get("tcc").asInt(tMax), tMin, tMax);
+            fan_conf->ocEnable = 1;
+            fan_conf->lastProf->currentTCC = static_cast<byte>(tccVal);
+            mon->acpi->SetTCC(static_cast<byte>(tccVal));
+        }
+        fan_conf->activePerfProfile = "custom";
+        fan_conf->Save();
+        RefreshTelemetryCache(false);
+        return BuildTelemetryJson();
+    }
+
+    if (cmd == "setMemoryXmp" && mon && fan_conf && fan_conf->lastProf) {
+        int prof = std::clamp(msg.get("profile").asInt(0), 0, 2);
+        fan_conf->ocEnable = 1;
+        fan_conf->lastProf->memoryXMP = static_cast<byte>(prof);
+        if (mon->acpi && mon->acpi->isXMP) {
+            mon->acpi->SetXMP(static_cast<byte>(prof));
+        }
+        fan_conf->Save();
+        RefreshTelemetryCache(false);
+        return BuildTelemetryJson();
+    }
+
+    if (cmd == "setPowerMode" && mon && fan_conf) {
+        int rawMode = msg.get("mode").asInt(0);
+        if (rawMode == 0) {
+            applyNamedPerfProfile("quiet");
+        } else if (rawMode == 1) {
+            applyNamedPerfProfile("balanced");
+        } else if (rawMode == 2) {
+            applyNamedPerfProfile("performance");
+        } else {
+            applyNamedPerfProfile("overdrive");
+        }
         RefreshTelemetryCache(false);
         return BuildTelemetryJson();
     }
@@ -1475,6 +1803,7 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             }
         }
         mon->SetPowerMode(0);
+        fan_conf->activePerfProfile = "custom";
         fan_conf->Save();
         RefreshTelemetryCache(false);
         return BuildTelemetryJson();
@@ -1523,6 +1852,9 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             }
             if (active && (mon->powerMode != 0 || mon->fullSpeedManual)) {
                 mon->SetPowerMode(0);
+            }
+            if (active) {
+                fan_conf->activePerfProfile = "custom";
             }
             fan_conf->Save();
         }
@@ -1583,7 +1915,10 @@ std::string CockpitBridge::HandleMessage(const std::string& jsonMessage) {
             conf->favoriteColors = joined;
         }
         conf->Save();
-        if (fxhl) fxhl->Refresh(true);
+        if (fxhl) {
+            fxhl->SetState(true);
+            fxhl->Refresh(true);
+        }
         return BuildFullStateJson();
     }
 
