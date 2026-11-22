@@ -17,6 +17,11 @@
   <br />
 </p>
 
+<p align="center">
+  <img src="AlienCockpit/assets/thermals.png" alt="AlienCockpit" width="860" />
+  <br />
+</p>
+
 ---
 
 ## Quick Installation (No Building Required)
